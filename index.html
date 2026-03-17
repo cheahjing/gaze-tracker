@@ -2,20 +2,21 @@
 <html>
 <head>
   <!--
-  AUTO LOOKING LOGGER — STATIC HOSTED VERSION
+  AUTO LOOKING LOGGER — STATIC HOSTED / MEDIAPIPE VERSION
 
   This page:
   1. Reads pid, vid, yt, and debug from the URL
   2. Requests front camera access
   3. Plays the given YouTube video
-  4. Runs simple face detection with tracking.js
-  5. Logs one row per second to Apps Script
+  4. Uses MediaPipe Face Detector on the webcam feed
+  5. Samples one row per second
   6. Logs AUTO_START, AUTO_SAMPLE, SESSION_ABORT, SESSION_COMPLETE
 
-  This is a browser-side "looking at screen" proxy, not lab-grade eye tracking.
+  This is a "looking at screen" proxy, not lab-grade eye tracking.
   -->
 
   <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Auto Looking Logger</title>
 
   <style>
     body {
@@ -119,8 +120,12 @@
     }
   </style>
 
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/tracking.js/1.1.3/tracking-min.js"></script>
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/tracking.js/1.1.3/data/face-min.js"></script>
+  <!-- MediaPipe Tasks Vision -->
+  <script type="module">
+    import vision from "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@latest";
+
+    window.__mediapipeVision = vision;
+  </script>
 </head>
 
 <body>
@@ -195,8 +200,11 @@
     let eventIndex = 0;
 
     let sampleTimer = null;
-    let trackerStarted = false;
     let cameraReady = false;
+    let detectorReady = false;
+    let faceDetector = null;
+    let detectionLoopRunning = false;
+    let lastVideoTimeMs = -1;
 
     let faceState = {
       face_detected: 0,
@@ -230,7 +238,7 @@
     /************************************************************
     INIT
     ************************************************************/
-    function init() {
+    async function init() {
       if (!YOUTUBE_ID) {
         debug.textContent =
           `❌ Missing YouTube ID in URL\n` +
@@ -238,16 +246,48 @@
         return;
       }
 
-      initPlayer(YOUTUBE_ID);
+      try {
+        await initFaceDetector();
+        initPlayer(YOUTUBE_ID);
 
-      debug.textContent =
-        `Ready\n` +
-        `Participant: ${PID}\n` +
-        `Video: ${VID}\n` +
-        `YouTube ID: ${YOUTUBE_ID}\n` +
-        `Session: ${SESSION_ID}\n` +
-        `Debug: ${DEBUG ? "ON" : "OFF"}\n` +
-        `Tap Start`;
+        debug.textContent =
+          `Ready\n` +
+          `Participant: ${PID}\n` +
+          `Video: ${VID}\n` +
+          `YouTube ID: ${YOUTUBE_ID}\n` +
+          `Session: ${SESSION_ID}\n` +
+          `Debug: ${DEBUG ? "ON" : "OFF"}\n` +
+          `Tap Start`;
+      } catch (err) {
+        debug.textContent = `❌ Init failed\n${err.message || String(err)}`;
+      }
+    }
+
+    /************************************************************
+    INITIALIZE MEDIAPIPE FACE DETECTOR
+    ************************************************************/
+    async function initFaceDetector() {
+      const vision = window.__mediapipeVision;
+      if (!vision) {
+        throw new Error("MediaPipe Vision library not loaded yet.");
+      }
+
+      const { FaceDetector, FilesetResolver } = vision;
+
+      const filesetResolver = await FilesetResolver.forVisionTasks(
+        "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@latest/wasm"
+      );
+
+      faceDetector = await FaceDetector.createFromOptions(filesetResolver, {
+        baseOptions: {
+          modelAssetPath:
+            "https://storage.googleapis.com/mediapipe-models/face_detector/blaze_face_short_range/float16/1/blaze_face_short_range.tflite"
+        },
+        runningMode: "VIDEO",
+        minDetectionConfidence: 0.5
+      });
+
+      detectorReady = true;
     }
 
     /************************************************************
@@ -342,6 +382,7 @@
         overlay.style.display = "none";
 
         await startCamera();
+        if (!detectorReady) throw new Error("Face detector not ready.");
 
         player.seekTo(0, true);
         player.playVideo();
@@ -349,7 +390,7 @@
         started = true;
         sessionEnded = false;
 
-        startTracking();
+        startDetectionLoop();
         await logAutoEvent("AUTO_START");
 
         sampleTimer = setInterval(() => {
@@ -362,7 +403,7 @@
           `❌ Could not start session\n` +
           `Participant: ${PID}\n` +
           `Video: ${VID}\n` +
-          `Camera error: ${err.name ? err.name + ": " : ""}${err.message || String(err)}`;
+          `Error: ${err.name ? err.name + ": " : ""}${err.message || String(err)}`;
 
         overlay.style.display = "flex";
       }
@@ -394,8 +435,6 @@
 
     /************************************************************
     LOG ONE AUTO EVENT
-
-    Uses a simple form-style POST to Apps Script.
     ************************************************************/
     async function logAutoEvent(key) {
       const t = player && player.getCurrentTime ? player.getCurrentTime() : 0;
@@ -454,28 +493,43 @@
     }
 
     /************************************************************
-    FACE DETECTION WITH tracking.js
+    MEDIAPIPE DETECTION LOOP
+
+    engaged = 1 only if:
+    - at least one face is detected
+    - and the first face center is inside the central region
     ************************************************************/
-    function startTracking() {
-      if (trackerStarted) return;
-      trackerStarted = true;
+    function startDetectionLoop() {
+      if (detectionLoopRunning) return;
+      detectionLoopRunning = true;
 
-      const tracker = new tracking.ObjectTracker("face");
-      tracker.setInitialScale(4);
-      tracker.setStepSize(2);
-      tracker.setEdgesDensity(0.1);
+      async function detectLoop() {
+        if (!detectionLoopRunning || !detectorReady || !cameraReady) {
+          requestAnimationFrame(detectLoop);
+          return;
+        }
 
-      tracking.track(camVideo, tracker, { camera: false });
+        if (camVideo.readyState < 2) {
+          requestAnimationFrame(detectLoop);
+          return;
+        }
 
-      tracker.on("track", function(event) {
-        const faces = event.data || [];
+        const nowMs = performance.now();
+        if (nowMs === lastVideoTimeMs) {
+          requestAnimationFrame(detectLoop);
+          return;
+        }
+        lastVideoTimeMs = nowMs;
+
+        const result = faceDetector.detectForVideo(camVideo, nowMs);
+        const detections = result.detections || [];
 
         if (DEBUG) {
           resizeDebugCanvas();
           camCtx.clearRect(0, 0, camCanvas.width, camCanvas.height);
         }
 
-        if (faces.length === 0) {
+        if (detections.length === 0) {
           faceState = {
             face_detected: 0,
             face_centered: 0,
@@ -484,15 +538,18 @@
             face_height: 0,
             engaged: 0
           };
+          requestAnimationFrame(detectLoop);
           return;
         }
 
-        const face = faces[0];
+        const d = detections[0];
+        const box = d.boundingBox;
+
         const vidW = camVideo.videoWidth || camVideo.clientWidth;
         const vidH = camVideo.videoHeight || camVideo.clientHeight;
 
-        const faceCx = face.x + face.width / 2;
-        const faceCy = face.y + face.height / 2;
+        const faceCx = box.originX + box.width / 2;
+        const faceCy = box.originY + box.height / 2;
 
         const margin = 0.15;
         const centered =
@@ -504,9 +561,9 @@
         faceState = {
           face_detected: 1,
           face_centered: centered ? 1 : 0,
-          face_count: faces.length,
-          face_width: Math.round(face.width),
-          face_height: Math.round(face.height),
+          face_count: detections.length,
+          face_width: Math.round(box.width),
+          face_height: Math.round(box.height),
           engaged: centered ? 1 : 0
         };
 
@@ -517,13 +574,17 @@
           camCtx.strokeStyle = centered ? "#00ff88" : "#ff3355";
           camCtx.lineWidth = 2;
           camCtx.strokeRect(
-            face.x * scaleX,
-            face.y * scaleY,
-            face.width * scaleX,
-            face.height * scaleY
+            box.originX * scaleX,
+            box.originY * scaleY,
+            box.width * scaleX,
+            box.height * scaleY
           );
         }
-      });
+
+        requestAnimationFrame(detectLoop);
+      }
+
+      requestAnimationFrame(detectLoop);
     }
 
     /************************************************************
