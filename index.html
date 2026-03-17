@@ -119,13 +119,6 @@
       white-space: pre-wrap;
     }
   </style>
-
-  <!-- MediaPipe Tasks Vision -->
-  <script type="module">
-    import vision from "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@latest";
-
-    window.__mediapipeVision = vision;
-  </script>
 </head>
 
 <body>
@@ -164,7 +157,10 @@
     </div>
   </div>
 
-  <script>
+  <script type="module">
+    import vision from "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@latest";
+    const { FaceDetector, FilesetResolver } = vision;
+
     /************************************************************
     CONFIG
     ************************************************************/
@@ -204,7 +200,7 @@
     let detectorReady = false;
     let faceDetector = null;
     let detectionLoopRunning = false;
-    let lastVideoTimeMs = -1;
+    let lastDetectionTimestamp = -1;
 
     let faceState = {
       face_detected: 0,
@@ -233,7 +229,7 @@
 
     if (DEBUG) debugPane.style.display = "block";
 
-    init();
+    await init();
 
     /************************************************************
     INIT
@@ -259,7 +255,9 @@
           `Debug: ${DEBUG ? "ON" : "OFF"}\n` +
           `Tap Start`;
       } catch (err) {
-        debug.textContent = `❌ Init failed\n${err.message || String(err)}`;
+        debug.textContent =
+          `❌ Init failed\n` +
+          `${err && err.message ? err.message : String(err)}`;
       }
     }
 
@@ -267,13 +265,6 @@
     INITIALIZE MEDIAPIPE FACE DETECTOR
     ************************************************************/
     async function initFaceDetector() {
-      const vision = window.__mediapipeVision;
-      if (!vision) {
-        throw new Error("MediaPipe Vision library not loaded yet.");
-      }
-
-      const { FaceDetector, FilesetResolver } = vision;
-
       const filesetResolver = await FilesetResolver.forVisionTasks(
         "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@latest/wasm"
       );
@@ -308,10 +299,25 @@
             playsinline: 1
           },
           events: {
+            onReady: onPlayerReady,
             onStateChange: onPlayerStateChange
           }
         });
       };
+    }
+
+    /************************************************************
+    PLAYER READY
+    ************************************************************/
+    function onPlayerReady() {
+      debug.textContent =
+        `Ready\n` +
+        `Participant: ${PID}\n` +
+        `Video: ${VID}\n` +
+        `YouTube ID: ${YOUTUBE_ID}\n` +
+        `Session: ${SESSION_ID}\n` +
+        `Debug: ${DEBUG ? "ON" : "OFF"}\n` +
+        `Tap Start`;
     }
 
     /************************************************************
@@ -382,7 +388,10 @@
         overlay.style.display = "none";
 
         await startCamera();
-        if (!detectorReady) throw new Error("Face detector not ready.");
+
+        if (!detectorReady) {
+          throw new Error("Face detector not ready.");
+        }
 
         player.seekTo(0, true);
         player.playVideo();
@@ -403,7 +412,7 @@
           `❌ Could not start session\n` +
           `Participant: ${PID}\n` +
           `Video: ${VID}\n` +
-          `Error: ${err.name ? err.name + ": " : ""}${err.message || String(err)}`;
+          `Error: ${err && err.message ? err.message : String(err)}`;
 
         overlay.style.display = "flex";
       }
@@ -429,7 +438,10 @@
       sessionEnded = true;
       clearInterval(sampleTimer);
 
-      if (player && player.pauseVideo) player.pauseVideo();
+      if (player && player.pauseVideo) {
+        player.pauseVideo();
+      }
+
       logAutoEvent("SESSION_ABORT");
     }
 
@@ -514,14 +526,15 @@
           return;
         }
 
-        const nowMs = performance.now();
-        if (nowMs === lastVideoTimeMs) {
+        const timestamp = performance.now();
+
+        if (timestamp === lastDetectionTimestamp) {
           requestAnimationFrame(detectLoop);
           return;
         }
-        lastVideoTimeMs = nowMs;
+        lastDetectionTimestamp = timestamp;
 
-        const result = faceDetector.detectForVideo(camVideo, nowMs);
+        const result = faceDetector.detectForVideo(camVideo, timestamp);
         const detections = result.detections || [];
 
         if (DEBUG) {
@@ -542,8 +555,8 @@
           return;
         }
 
-        const d = detections[0];
-        const box = d.boundingBox;
+        const detection = detections[0];
+        const box = detection.boundingBox;
 
         const vidW = camVideo.videoWidth || camVideo.clientWidth;
         const vidH = camVideo.videoHeight || camVideo.clientHeight;
