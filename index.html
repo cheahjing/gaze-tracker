@@ -57,6 +57,8 @@
       font-size: 12px;
       border-radius: 8px;
       white-space: pre-wrap;
+      z-index: 900;
+      max-width: 320px;
     }
 
     #debugPane {
@@ -64,30 +66,57 @@
       background: #111;
       padding: 12px;
       display: none;
+      box-sizing: border-box;
+      overflow-y: auto;
+    }
+
+    #camWrap {
+      position: relative;
+      width: 100%;
+      aspect-ratio: 4 / 3;
+      background: #000;
+      overflow: hidden;
+      margin-bottom: 12px;
     }
 
     #camVideo {
       width: 100%;
+      height: 100%;
+      object-fit: cover;
+      background: #000;
+      display: block;
       transform: scaleX(-1);
     }
 
     #camCanvas {
       position: absolute;
       inset: 0;
+      width: 100%;
+      height: 100%;
+      pointer-events: none;
       transform: scaleX(-1);
+    }
+
+    .kv {
+      margin: 4px 0;
+      font-size: 13px;
+      white-space: pre-wrap;
     }
   </style>
 </head>
 
 <body>
   <div id="layout">
-
     <div id="videoPane">
       <div id="player"></div>
 
       <div id="overlay">
         <div>
           <h2>Auto Looking Logger</h2>
+          <p>
+            Tap Start to begin video playback and automatic sampling.<br>
+            Press Escape to abort the session.
+          </p>
           <button id="startBtn">Start</button>
         </div>
       </div>
@@ -96,14 +125,23 @@
     </div>
 
     <div id="debugPane">
-      <video id="camVideo" autoplay playsinline muted></video>
-      <canvas id="camCanvas"></canvas>
+      <h3 style="margin-top:0;">Debug Camera View</h3>
 
-      <div id="dbgFace"></div>
-      <div id="dbgCentered"></div>
-      <div id="dbgConf"></div>
+      <div id="camWrap">
+        <video id="camVideo" autoplay playsinline muted></video>
+        <canvas id="camCanvas"></canvas>
+      </div>
+
+      <div class="kv" id="dbgCam">CAMERA: —</div>
+      <div class="kv" id="dbgFace">FACE: —</div>
+      <div class="kv" id="dbgCentered">CENTERED: —</div>
+      <div class="kv" id="dbgCount">FACE COUNT: —</div>
+      <div class="kv" id="dbgSize">FACE SIZE: —</div>
+      <div class="kv" id="dbgConf">CONFIDENCE: —</div>
+      <div class="kv" id="dbgState">AUTO STATE: —</div>
+      <div class="kv" id="dbgTime">VIDEO TIME: —</div>
+      <div class="kv" id="dbgPost">POST: —</div>
     </div>
-
   </div>
 
   <script type="module">
@@ -112,53 +150,121 @@
       FilesetResolver
     } from "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision/vision_bundle.mjs";
 
-    /******** CONFIG ********/
+    /************************************************************
+    CONFIG
+    ************************************************************/
     const APPS_SCRIPT_URL = "https://script.google.com/a/macros/ntucfirstcampus.com/s/AKfycbz9G37Ri9zC81LNkGL0Mt1v609kIN-zqQCtpm2yhVFnH7uz3KDahVWaGrUt1aW781z8/exec";
 
-    /******** URL PARAMS ********/
+    /************************************************************
+    URL PARAMETERS
+
+    Required:
+    - pid
+    - vid
+    - yt
+
+    Optional:
+    - debug=1
+    ************************************************************/
     const params = new URLSearchParams(location.search);
+
     const PID = params.get("pid") || "P001";
     const VID = params.get("vid") || "V01";
     const YOUTUBE_ID = params.get("yt") || "";
     const DEBUG = params.get("debug") === "1";
 
-    const SESSION_ID = "sess_" + Date.now();
+    /************************************************************
+    SESSION / STATE
+    ************************************************************/
+    const SESSION_ID =
+      "auto_sess_" + Date.now() + "_" + Math.floor(Math.random() * 100000);
 
-    let player;
+    let player = null;
     let started = false;
     let sessionEnded = false;
     let eventIndex = 0;
 
-    let faceDetector;
+    let sampleTimer = null;
     let cameraReady = false;
+    let detectorReady = false;
+    let faceDetector = null;
+    let detectionLoopRunning = false;
 
     let faceState = {
       face_detected: 0,
       face_centered: 0,
+      face_count: 0,
+      face_width: 0,
+      face_height: 0,
       detection_confidence: 0,
       engaged: 0
     };
 
     const debug = document.getElementById("debug");
-    const startBtn = document.getElementById("startBtn");
     const overlay = document.getElementById("overlay");
+    const startBtn = document.getElementById("startBtn");
     const debugPane = document.getElementById("debugPane");
 
     const camVideo = document.getElementById("camVideo");
     const camCanvas = document.getElementById("camCanvas");
-    const ctx = camCanvas.getContext("2d");
+    const camCtx = camCanvas.getContext("2d");
+
+    const dbgCam = document.getElementById("dbgCam");
+    const dbgFace = document.getElementById("dbgFace");
+    const dbgCentered = document.getElementById("dbgCentered");
+    const dbgCount = document.getElementById("dbgCount");
+    const dbgSize = document.getElementById("dbgSize");
+    const dbgConf = document.getElementById("dbgConf");
+    const dbgState = document.getElementById("dbgState");
+    const dbgTime = document.getElementById("dbgTime");
+    const dbgPost = document.getElementById("dbgPost");
 
     if (DEBUG) debugPane.style.display = "block";
 
-    init();
+    await init();
 
+    /************************************************************
+    INIT
+    ************************************************************/
     async function init() {
-      debug.textContent = "Initializing MediaPipe...";
-      const resolver = await FilesetResolver.forVisionTasks(
+      if (!YOUTUBE_ID) {
+        debug.textContent =
+          `❌ Missing YouTube ID in URL\n` +
+          `Expected ?pid=P001&vid=V01&yt=YOUTUBE_ID`;
+        return;
+      }
+
+      try {
+        debug.textContent = "Initializing MediaPipe...";
+        await initFaceDetector();
+
+        debug.textContent = "Initializing YouTube player...";
+        initPlayer(YOUTUBE_ID);
+
+        debug.textContent =
+          `Ready\n` +
+          `Participant: ${PID}\n` +
+          `Video: ${VID}\n` +
+          `YouTube ID: ${YOUTUBE_ID}\n` +
+          `Session: ${SESSION_ID}\n` +
+          `Debug: ${DEBUG ? "ON" : "OFF"}\n` +
+          `Tap Start`;
+      } catch (err) {
+        debug.textContent =
+          `❌ Init failed\n` +
+          `${err && err.message ? err.message : String(err)}`;
+      }
+    }
+
+    /************************************************************
+    INITIALIZE MEDIAPIPE FACE DETECTOR
+    ************************************************************/
+    async function initFaceDetector() {
+      const filesetResolver = await FilesetResolver.forVisionTasks(
         "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision/wasm"
       );
 
-      faceDetector = await FaceDetector.createFromOptions(resolver, {
+      faceDetector = await FaceDetector.createFromOptions(filesetResolver, {
         baseOptions: {
           modelAssetPath:
             "https://storage.googleapis.com/mediapipe-models/face_detector/blaze_face_short_range/float16/1/blaze_face_short_range.tflite"
@@ -167,151 +273,346 @@
         minDetectionConfidence: 0.5
       });
 
-      initYouTube();
-
-      debug.textContent = "Ready. Tap Start.";
+      detectorReady = true;
     }
 
-    function initYouTube() {
+    /************************************************************
+    CREATE YOUTUBE PLAYER
+    ************************************************************/
+    function initPlayer(youtubeId) {
       const tag = document.createElement("script");
       tag.src = "https://www.youtube.com/iframe_api";
       document.head.appendChild(tag);
 
-      window.onYouTubeIframeAPIReady = () => {
+      window.onYouTubeIframeAPIReady = function () {
         player = new YT.Player("player", {
-          videoId: YOUTUBE_ID,
-          playerVars: { controls: 0, playsinline: 1 },
+          videoId: youtubeId,
+          playerVars: {
+            controls: 0,
+            rel: 0,
+            modestbranding: 1,
+            playsinline: 1
+          },
           events: {
-            onReady: () => debug.textContent = "Ready. Tap Start.",
-            onStateChange: (e) => {
-              if (e.data === YT.PlayerState.ENDED) endSession("SESSION_COMPLETE");
-            }
+            onReady: onPlayerReady,
+            onStateChange: onPlayerStateChange
           }
         });
       };
     }
 
-    startBtn.onclick = startSession;
-
-    async function startSession() {
-      overlay.style.display = "none";
-
-      await startCamera();
-
-      player.playVideo();
-      started = true;
-
-      startDetection();
-      logEvent("AUTO_START");
-
-      setInterval(() => {
-        if (!sessionEnded) logEvent("AUTO_SAMPLE");
-      }, 1000);
+    /************************************************************
+    PLAYER READY
+    ************************************************************/
+    function onPlayerReady() {
+      debug.textContent =
+        `Ready\n` +
+        `Participant: ${PID}\n` +
+        `Video: ${VID}\n` +
+        `YouTube ID: ${YOUTUBE_ID}\n` +
+        `Session: ${SESSION_ID}\n` +
+        `Debug: ${DEBUG ? "ON" : "OFF"}\n` +
+        `Tap Start`;
     }
 
+    /************************************************************
+    START CAMERA
+    ************************************************************/
     async function startCamera() {
+      if (cameraReady) return;
+
+      dbgCam.textContent = "CAMERA: requesting permission...";
+
       const stream = await navigator.mediaDevices.getUserMedia({
-        video: { facingMode: "user" }
+        video: { facingMode: "user" },
+        audio: false
       });
 
       camVideo.srcObject = stream;
       await camVideo.play();
+      await waitForCameraReady();
 
       cameraReady = true;
+      dbgCam.textContent = `CAMERA: ready (${camVideo.videoWidth}×${camVideo.videoHeight})`;
     }
 
-    function startDetection() {
-      function loop() {
-        if (!cameraReady) return requestAnimationFrame(loop);
+    /************************************************************
+    WAIT FOR CAMERA READY
+    ************************************************************/
+    function waitForCameraReady() {
+      return new Promise((resolve, reject) => {
+        const timeoutMs = 5000;
+        const start = Date.now();
 
-        const result = faceDetector.detectForVideo(camVideo, performance.now());
-        const faces = result.detections || [];
-
-        if (faces.length === 0) {
-          faceState = {
-            face_detected: 0,
-            face_centered: 0,
-            detection_confidence: 0,
-            engaged: 0
-          };
-        } else {
-          const box = faces[0].boundingBox;
-          const score = faces[0].categories[0].score;
-
-          const cx = box.originX + box.width / 2;
-          const cy = box.originY + box.height / 2;
-
-          const w = camVideo.videoWidth;
-          const h = camVideo.videoHeight;
-
-          const centered =
-            cx > w * 0.15 &&
-            cx < w * 0.85 &&
-            cy > h * 0.15 &&
-            cy < h * 0.85;
-
-          faceState = {
-            face_detected: 1,
-            face_centered: centered ? 1 : 0,
-            detection_confidence: Number(score.toFixed(3)),
-            engaged: centered ? 1 : 0
-          };
-
-          if (DEBUG) {
-            ctx.clearRect(0, 0, camCanvas.width, camCanvas.height);
-            ctx.strokeStyle = centered ? "lime" : "red";
-            ctx.strokeRect(box.originX, box.originY, box.width, box.height);
+        function check() {
+          if (camVideo.videoWidth > 0 && camVideo.videoHeight > 0) {
+            resizeDebugCanvas();
+            resolve();
+            return;
           }
+
+          if (Date.now() - start > timeoutMs) {
+            reject(new Error("Camera video did not become ready in time."));
+            return;
+          }
+
+          requestAnimationFrame(check);
         }
 
-        updateDebug();
-        requestAnimationFrame(loop);
-      }
-
-      loop();
-    }
-
-    function updateDebug() {
-      debug.textContent =
-        `PID: ${PID}\nVID: ${VID}\n` +
-        `Face: ${faceState.face_detected}\n` +
-        `Centered: ${faceState.face_centered}\n` +
-        `Confidence: ${faceState.detection_confidence}`;
-    }
-
-    async function logEvent(key) {
-      await fetch(APPS_SCRIPT_URL, {
-        method: "POST",
-        mode: "no-cors",
-        headers: {
-          "Content-Type": "application/x-www-form-urlencoded"
-        },
-        body: new URLSearchParams({
-          session_id: SESSION_ID,
-          pid: PID,
-          vid: VID,
-          youtubeId: YOUTUBE_ID,
-          eventIndex: eventIndex++,
-          videoTime: player.getCurrentTime(),
-          engaged: faceState.engaged,
-          key: key,
-          face_detected: faceState.face_detected,
-          face_centered: faceState.face_centered,
-          detection_confidence: faceState.detection_confidence
-        })
+        check();
       });
     }
 
-    function endSession(key) {
-      if (sessionEnded) return;
-      sessionEnded = true;
-      logEvent(key);
+    function resizeDebugCanvas() {
+      if (!DEBUG) return;
+      camCanvas.width = camVideo.clientWidth || 320;
+      camCanvas.height = camVideo.clientHeight || 240;
     }
 
-    document.addEventListener("keydown", (e) => {
-      if (e.code === "Escape") endSession("SESSION_ABORT");
-    });
+    window.addEventListener("resize", resizeDebugCanvas);
 
+    /************************************************************
+    START SESSION
+    ************************************************************/
+    startBtn.addEventListener("click", startSession);
+
+    async function startSession() {
+      if (!player || started) return;
+
+      try {
+        overlay.style.display = "none";
+
+        await startCamera();
+
+        if (!detectorReady) {
+          throw new Error("Face detector not ready.");
+        }
+
+        player.seekTo(0, true);
+        player.playVideo();
+
+        started = true;
+        sessionEnded = false;
+
+        startDetectionLoop();
+        await logAutoEvent("AUTO_START");
+
+        sampleTimer = setInterval(() => {
+          if (!started || sessionEnded) return;
+          logAutoEvent("AUTO_SAMPLE");
+        }, 1000);
+
+      } catch (err) {
+        debug.textContent =
+          `❌ Could not start session\n` +
+          `Participant: ${PID}\n` +
+          `Video: ${VID}\n` +
+          `Error: ${err && err.message ? err.message : String(err)}`;
+
+        overlay.style.display = "flex";
+      }
+    }
+
+    /************************************************************
+    PLAYER STATE CHANGE
+    ************************************************************/
+    function onPlayerStateChange(event) {
+      if (started && !sessionEnded && event.data === YT.PlayerState.ENDED) {
+        sessionEnded = true;
+        clearInterval(sampleTimer);
+        logAutoEvent("SESSION_COMPLETE");
+      }
+    }
+
+    /************************************************************
+    TERMINATE SESSION
+    ************************************************************/
+    function terminateSession() {
+      if (!started || sessionEnded) return;
+
+      sessionEnded = true;
+      clearInterval(sampleTimer);
+
+      if (player && player.pauseVideo) {
+        player.pauseVideo();
+      }
+
+      logAutoEvent("SESSION_ABORT");
+    }
+
+    /************************************************************
+    LOG ONE AUTO EVENT
+
+    Sends the current automatic state to Apps Script.
+    ************************************************************/
+    async function logAutoEvent(key) {
+      const t = player && player.getCurrentTime ? player.getCurrentTime() : 0;
+
+      updateDebug(t, key);
+
+      const body = new URLSearchParams({
+        session_id: SESSION_ID,
+        pid: PID,
+        vid: VID,
+        youtubeId: YOUTUBE_ID,
+        eventIndex: String(eventIndex++),
+        videoTime: String(Number(t.toFixed(3))),
+        engaged: String(faceState.engaged),
+        key: key,
+        face_detected: String(faceState.face_detected),
+        face_centered: String(faceState.face_centered),
+        face_count: String(faceState.face_count),
+        face_width: String(faceState.face_width),
+        face_height: String(faceState.face_height),
+        detection_confidence: String(faceState.detection_confidence)
+      });
+
+      try {
+        const resp = await fetch(APPS_SCRIPT_URL, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/x-www-form-urlencoded;charset=UTF-8"
+          },
+          body: body.toString()
+        });
+
+        const text = await resp.text();
+        dbgPost.textContent = `POST: ${resp.status} ${text}`;
+      } catch (err) {
+        dbgPost.textContent = `POST FAILED: ${err && err.message ? err.message : String(err)}`;
+      }
+    }
+
+    /************************************************************
+    UPDATE DEBUG PANELS
+    ************************************************************/
+    function updateDebug(videoTime, key) {
+      debug.textContent =
+        `Participant: ${PID}\n` +
+        `Video: ${VID}\n` +
+        `YouTube ID: ${YOUTUBE_ID}\n` +
+        `Session: ${SESSION_ID}\n` +
+        `video_time: ${videoTime.toFixed(2)}\n` +
+        `engaged: ${faceState.engaged}\n` +
+        `key: ${key}\n` +
+        `face_detected: ${faceState.face_detected}\n` +
+        `face_centered: ${faceState.face_centered}\n` +
+        `confidence: ${faceState.detection_confidence}`;
+
+      if (DEBUG) {
+        dbgFace.textContent = `FACE: ${faceState.face_detected ? "YES" : "NO"}`;
+        dbgCentered.textContent = `CENTERED: ${faceState.face_centered ? "YES" : "NO"}`;
+        dbgCount.textContent = `FACE COUNT: ${faceState.face_count}`;
+        dbgSize.textContent = `FACE SIZE: ${faceState.face_width} × ${faceState.face_height}`;
+        dbgConf.textContent = `CONFIDENCE: ${faceState.detection_confidence}`;
+        dbgState.textContent = `AUTO STATE: ${faceState.engaged}`;
+        dbgTime.textContent = `VIDEO TIME: ${videoTime.toFixed(2)}s`;
+      }
+    }
+
+    /************************************************************
+    MEDIAPIPE DETECTION LOOP
+
+    engaged = 1 only if:
+    - at least one face is detected
+    - and the first face center is inside the central region
+    ************************************************************/
+    function startDetectionLoop() {
+      if (detectionLoopRunning) return;
+      detectionLoopRunning = true;
+
+      function detectLoop() {
+        if (!detectionLoopRunning || !detectorReady || !cameraReady) {
+          requestAnimationFrame(detectLoop);
+          return;
+        }
+
+        if (camVideo.readyState < 2 || camVideo.videoWidth === 0 || camVideo.videoHeight === 0) {
+          requestAnimationFrame(detectLoop);
+          return;
+        }
+
+        const timestamp = performance.now();
+        const result = faceDetector.detectForVideo(camVideo, timestamp);
+        const detections = result?.detections || [];
+
+        if (DEBUG) {
+          resizeDebugCanvas();
+          camCtx.clearRect(0, 0, camCanvas.width, camCanvas.height);
+        }
+
+        if (detections.length === 0) {
+          faceState = {
+            face_detected: 0,
+            face_centered: 0,
+            face_count: 0,
+            face_width: 0,
+            face_height: 0,
+            detection_confidence: 0,
+            engaged: 0
+          };
+          requestAnimationFrame(detectLoop);
+          return;
+        }
+
+        const detection = detections[0];
+        const box = detection.boundingBox;
+        const score = detection.categories && detection.categories[0]
+          ? detection.categories[0].score
+          : 0;
+
+        const vidW = camVideo.videoWidth;
+        const vidH = camVideo.videoHeight;
+
+        const faceCx = box.originX + box.width / 2;
+        const faceCy = box.originY + box.height / 2;
+
+        const margin = 0.15;
+        const centered =
+          faceCx > vidW * margin &&
+          faceCx < vidW * (1 - margin) &&
+          faceCy > vidH * margin &&
+          faceCy < vidH * (1 - margin);
+
+        faceState = {
+          face_detected: 1,
+          face_centered: centered ? 1 : 0,
+          face_count: detections.length,
+          face_width: Math.round(box.width),
+          face_height: Math.round(box.height),
+          detection_confidence: Number(score.toFixed(3)),
+          engaged: centered ? 1 : 0
+        };
+
+        if (DEBUG) {
+          const scaleX = camCanvas.width / vidW;
+          const scaleY = camCanvas.height / vidH;
+
+          camCtx.strokeStyle = centered ? "#00ff88" : "#ff3355";
+          camCtx.lineWidth = 2;
+          camCtx.strokeRect(
+            box.originX * scaleX,
+            box.originY * scaleY,
+            box.width * scaleX,
+            box.height * scaleY
+          );
+        }
+
+        requestAnimationFrame(detectLoop);
+      }
+
+      requestAnimationFrame(detectLoop);
+    }
+
+    /************************************************************
+    KEYBOARD LISTENER
+    ************************************************************/
+    document.addEventListener("keydown", (e) => {
+      if (e.code === "Escape") {
+        e.preventDefault();
+        terminateSession();
+      }
+    });
   </script>
 </body>
 </html>
