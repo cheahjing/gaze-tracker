@@ -2,7 +2,7 @@
 <html>
 <head>
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Auto Looking Logger</title>
+  <title>Auto Looking Logger - Local Edition</title>
 
   <style>
     body {
@@ -46,6 +46,25 @@
       font-size: 18px;
       padding: 10px 18px;
       margin-top: 10px;
+      cursor: pointer;
+    }
+
+    #downloadBtn {
+      position: absolute;
+      bottom: 20px;
+      right: 20px;
+      background: #00cc66;
+      color: white;
+      font-weight: bold;
+      border: none;
+      border-radius: 6px;
+      display: none; /* Hidden until the session stops */
+      z-index: 1000;
+      box-shadow: 0 4px 6px rgba(0,0,0,0.3);
+    }
+    
+    #downloadBtn:hover {
+      background: #00aa55;
     }
 
     #debug {
@@ -115,11 +134,13 @@
           <h2>Auto Looking Logger</h2>
           <p>
             Tap Start to begin video playback and automatic sampling.<br>
-            Press Escape to abort the session.
+            Press Escape to abort the session and download data.
           </p>
           <button id="startBtn">Start</button>
         </div>
       </div>
+
+      <button id="downloadBtn">📥 Download Data (CSV)</button>
 
       <div id="debug">Loading...</div>
     </div>
@@ -140,7 +161,7 @@
       <div class="kv" id="dbgConf">CONFIDENCE: —</div>
       <div class="kv" id="dbgState">AUTO STATE: —</div>
       <div class="kv" id="dbgTime">VIDEO TIME: —</div>
-      <div class="kv" id="dbgPost">POST: —</div>
+      <div class="kv" id="dbgPost">SAVE STATUS: —</div>
     </div>
   </div>
 
@@ -151,20 +172,9 @@
     } from "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision/vision_bundle.mjs";
 
     /************************************************************
-    CONFIG
-    ************************************************************/
-    const APPS_SCRIPT_URL = "https://script.google.com/a/macros/ntucfirstcampus.com/s/AKfycbz9G37Ri9zC81LNkGL0Mt1v609kIN-zqQCtpm2yhVFnH7uz3KDahVWaGrUt1aW781z8/exec";
-
-    /************************************************************
     URL PARAMETERS
-
-    Required:
-    - pid
-    - vid
-    - yt
-
-    Optional:
-    - debug=1
+    Required: ?pid=P001&vid=V01&yt=YOUTUBE_ID
+    Optional: &debug=1
     ************************************************************/
     const params = new URLSearchParams(location.search);
 
@@ -176,13 +186,20 @@
     /************************************************************
     SESSION / STATE
     ************************************************************/
-    const SESSION_ID =
-      "auto_sess_" + Date.now() + "_" + Math.floor(Math.random() * 100000);
+    const SESSION_ID = "auto_sess_" + Date.now() + "_" + Math.floor(Math.random() * 100000);
 
     let player = null;
     let started = false;
     let sessionEnded = false;
     let eventIndex = 0;
+
+    // Local CSV Storage
+    let csvData = [];
+    const CSV_HEADERS = [
+      "timestamp", "session_id", "participant_id", "video_id", "youtube_id", 
+      "event_index", "video_time", "engaged", "key", "face_detected", 
+      "face_centered", "face_count", "face_width", "face_height", "detection_confidence"
+    ];
 
     let sampleTimer = null;
     let cameraReady = false;
@@ -200,9 +217,11 @@
       engaged: 0
     };
 
+    // DOM Elements
     const debug = document.getElementById("debug");
     const overlay = document.getElementById("overlay");
     const startBtn = document.getElementById("startBtn");
+    const downloadBtn = document.getElementById("downloadBtn");
     const debugPane = document.getElementById("debugPane");
 
     const camVideo = document.getElementById("camVideo");
@@ -301,17 +320,12 @@
       };
     }
 
-    /************************************************************
-    PLAYER READY
-    ************************************************************/
     function onPlayerReady() {
       debug.textContent =
         `Ready\n` +
         `Participant: ${PID}\n` +
         `Video: ${VID}\n` +
-        `YouTube ID: ${YOUTUBE_ID}\n` +
         `Session: ${SESSION_ID}\n` +
-        `Debug: ${DEBUG ? "ON" : "OFF"}\n` +
         `Tap Start`;
     }
 
@@ -336,9 +350,6 @@
       dbgCam.textContent = `CAMERA: ready (${camVideo.videoWidth}×${camVideo.videoHeight})`;
     }
 
-    /************************************************************
-    WAIT FOR CAMERA READY
-    ************************************************************/
     function waitForCameraReady() {
       return new Promise((resolve, reject) => {
         const timeoutMs = 5000;
@@ -381,7 +392,6 @@
 
       try {
         overlay.style.display = "none";
-
         await startCamera();
 
         if (!detectorReady) {
@@ -395,7 +405,7 @@
         sessionEnded = false;
 
         startDetectionLoop();
-        await logAutoEvent("AUTO_START");
+        logAutoEvent("AUTO_START");
 
         sampleTimer = setInterval(() => {
           if (!started || sessionEnded) return;
@@ -406,7 +416,6 @@
         debug.textContent =
           `❌ Could not start session\n` +
           `Participant: ${PID}\n` +
-          `Video: ${VID}\n` +
           `Error: ${err && err.message ? err.message : String(err)}`;
 
         overlay.style.display = "flex";
@@ -414,19 +423,18 @@
     }
 
     /************************************************************
-    PLAYER STATE CHANGE
+    PLAYER STATE CHANGE & TERMINATE
     ************************************************************/
     function onPlayerStateChange(event) {
       if (started && !sessionEnded && event.data === YT.PlayerState.ENDED) {
         sessionEnded = true;
         clearInterval(sampleTimer);
+        downloadBtn.style.display = "block"; // Show manual button
         logAutoEvent("SESSION_COMPLETE");
+        downloadCSV(); // Auto download
       }
     }
 
-    /************************************************************
-    TERMINATE SESSION
-    ************************************************************/
     function terminateSession() {
       if (!started || sessionEnded) return;
 
@@ -437,53 +445,71 @@
         player.pauseVideo();
       }
 
+      downloadBtn.style.display = "block"; // Show manual button
       logAutoEvent("SESSION_ABORT");
+      downloadCSV(); // Auto download
     }
 
     /************************************************************
-    LOG ONE AUTO EVENT
-
-    Sends the current automatic state to Apps Script.
+    LOG AUTO EVENT (LOCAL ARRAY)
     ************************************************************/
-   async function logAutoEvent(key) {
+    function logAutoEvent(key) {
       const t = player && player.getCurrentTime ? player.getCurrentTime() : 0;
       updateDebug(t, key);
 
-      // Package everything into a clean JSON object
-      const payload = {
-        session_id: SESSION_ID,
-        pid: PID,
-        vid: VID,
-        youtubeId: YOUTUBE_ID,
-        eventIndex: eventIndex++,
-        videoTime: Number(t.toFixed(3)),
-        engaged: faceState.engaged,
-        key: key,
-        face_detected: faceState.face_detected,
-        face_centered: faceState.face_centered,
-        face_count: faceState.face_count,
-        face_width: faceState.face_width,
-        face_height: faceState.face_height,
-        detection_confidence: faceState.detection_confidence
-      };
-
-      try {
-        await fetch(APPS_SCRIPT_URL, {
-          method: "POST",
-          mode: "no-cors", // Crucial: Tells the browser not to block the request
-          headers: {
-            "Content-Type": "text/plain" // Crucial: Bypasses CORS preflight checks
-          },
-          body: JSON.stringify(payload)
-        });
-
-        // Note: With no-cors, the browser hides the response text for security, 
-        // so we just log that the send was attempted.
-        dbgPost.textContent = `POST: Payload sent to GAS`;
-      } catch (err) {
-        dbgPost.textContent = `POST FAILED: ${err && err.message ? err.message : String(err)}`;
+      // Add headers on first run
+      if (csvData.length === 0) {
+        csvData.push(CSV_HEADERS);
       }
+
+      // Create row
+      const row = [
+        new Date().toISOString(),
+        SESSION_ID,
+        PID,
+        VID,
+        YOUTUBE_ID,
+        eventIndex++,
+        Number(t.toFixed(3)),
+        faceState.engaged,
+        key,
+        faceState.face_detected,
+        faceState.face_centered,
+        faceState.face_count,
+        faceState.face_width,
+        faceState.face_height,
+        faceState.detection_confidence
+      ];
+
+      csvData.push(row);
+      dbgPost.textContent = `SAVE STATUS: ${csvData.length - 1} rows saved locally.`;
     }
+
+    /************************************************************
+    DOWNLOAD CSV FILE
+    ************************************************************/
+    function downloadCSV() {
+      if (csvData.length <= 1) return; // Don't download empty data
+
+      const csvString = csvData.map(row => row.join(",")).join("\n");
+      const blob = new Blob([csvString], { type: "text/csv;charset=utf-8;" });
+      const url = URL.createObjectURL(blob);
+
+      const link = document.createElement("a");
+      link.setAttribute("href", url);
+      link.setAttribute("download", `${PID}_${VID}_session_data.csv`);
+      link.style.display = "none";
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+
+      dbgPost.textContent = "SAVE STATUS: CSV DOWNLOADED!";
+    }
+
+    // Manual Download Button Listener
+    downloadBtn.addEventListener("click", () => {
+      downloadCSV();
+    });
 
     /************************************************************
     UPDATE DEBUG PANELS
@@ -492,14 +518,9 @@
       debug.textContent =
         `Participant: ${PID}\n` +
         `Video: ${VID}\n` +
-        `YouTube ID: ${YOUTUBE_ID}\n` +
-        `Session: ${SESSION_ID}\n` +
         `video_time: ${videoTime.toFixed(2)}\n` +
         `engaged: ${faceState.engaged}\n` +
-        `key: ${key}\n` +
-        `face_detected: ${faceState.face_detected}\n` +
-        `face_centered: ${faceState.face_centered}\n` +
-        `confidence: ${faceState.detection_confidence}`;
+        `key: ${key}`;
 
       if (DEBUG) {
         dbgFace.textContent = `FACE: ${faceState.face_detected ? "YES" : "NO"}`;
@@ -514,10 +535,6 @@
 
     /************************************************************
     MEDIAPIPE DETECTION LOOP
-
-    engaged = 1 only if:
-    - at least one face is detected
-    - and the first face center is inside the central region
     ************************************************************/
     function startDetectionLoop() {
       if (detectionLoopRunning) return;
@@ -607,7 +624,7 @@
     }
 
     /************************************************************
-    KEYBOARD LISTENER
+    KEYBOARD LISTENER (ESC TO ABORT)
     ************************************************************/
     document.addEventListener("keydown", (e) => {
       if (e.code === "Escape") {
