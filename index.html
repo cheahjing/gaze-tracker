@@ -445,39 +445,41 @@
 
     Sends the current automatic state to Apps Script.
     ************************************************************/
-    async function logAutoEvent(key) {
+   async function logAutoEvent(key) {
       const t = player && player.getCurrentTime ? player.getCurrentTime() : 0;
-
       updateDebug(t, key);
 
-      const body = new URLSearchParams({
+      // Package everything into a clean JSON object
+      const payload = {
         session_id: SESSION_ID,
         pid: PID,
         vid: VID,
         youtubeId: YOUTUBE_ID,
-        eventIndex: String(eventIndex++),
-        videoTime: String(Number(t.toFixed(3))),
-        engaged: String(faceState.engaged),
+        eventIndex: eventIndex++,
+        videoTime: Number(t.toFixed(3)),
+        engaged: faceState.engaged,
         key: key,
-        face_detected: String(faceState.face_detected),
-        face_centered: String(faceState.face_centered),
-        face_count: String(faceState.face_count),
-        face_width: String(faceState.face_width),
-        face_height: String(faceState.face_height),
-        detection_confidence: String(faceState.detection_confidence)
-      });
+        face_detected: faceState.face_detected,
+        face_centered: faceState.face_centered,
+        face_count: faceState.face_count,
+        face_width: faceState.face_width,
+        face_height: faceState.face_height,
+        detection_confidence: faceState.detection_confidence
+      };
 
       try {
-        const resp = await fetch(APPS_SCRIPT_URL, {
+        await fetch(APPS_SCRIPT_URL, {
           method: "POST",
+          mode: "no-cors", // Crucial: Tells the browser not to block the request
           headers: {
-            "Content-Type": "application/x-www-form-urlencoded;charset=UTF-8"
+            "Content-Type": "text/plain" // Crucial: Bypasses CORS preflight checks
           },
-          body: body.toString()
+          body: JSON.stringify(payload)
         });
 
-        const text = await resp.text();
-        dbgPost.textContent = `POST: ${resp.status} ${text}`;
+        // Note: With no-cors, the browser hides the response text for security, 
+        // so we just log that the send was attempted.
+        dbgPost.textContent = `POST: Payload sent to GAS`;
       } catch (err) {
         dbgPost.textContent = `POST FAILED: ${err && err.message ? err.message : String(err)}`;
       }
