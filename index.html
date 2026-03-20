@@ -173,7 +173,7 @@
       <div class="kv" id="dbgCount">FACE COUNT: —</div>
       <div class="kv" id="dbgSize">FACE SIZE: —</div>
       <div class="kv" id="dbgConf">CONFIDENCE: —</div>
-      <div class="kv" id="dbgState">AUTO STATE: —</div>
+      <div class="kv" id="dbgSym">SYMMETRY: —</div> <div class="kv" id="dbgState">AUTO STATE: —</div>
       <div class="kv" id="dbgTime">VIDEO TIME: —</div>
       <div class="kv" id="dbgPost">SAVE STATUS: —</div>
     </div>
@@ -212,7 +212,8 @@
     const CSV_HEADERS = [
       "timestamp", "session_id", "participant_id", "video_id", "youtube_id", 
       "event_index", "video_time", "engaged", "key", "face_detected", 
-      "face_centered", "face_count", "face_width", "face_height", "detection_confidence"
+      "face_centered", "face_count", "face_width", "face_height", "detection_confidence",
+      "head_symmetry" // NEW HEADER
     ];
 
     let sampleTimer = null;
@@ -228,6 +229,7 @@
       face_width: 0,
       face_height: 0,
       detection_confidence: 0,
+      head_symmetry: 0, // NEW STATE VARIABLE
       engaged: 0
     };
 
@@ -249,6 +251,7 @@
     const dbgCount = document.getElementById("dbgCount");
     const dbgSize = document.getElementById("dbgSize");
     const dbgConf = document.getElementById("dbgConf");
+    const dbgSym = document.getElementById("dbgSym"); // NEW DEBUG ELEMENT
     const dbgState = document.getElementById("dbgState");
     const dbgTime = document.getElementById("dbgTime");
     const dbgPost = document.getElementById("dbgPost");
@@ -512,7 +515,8 @@
         faceState.face_count,
         faceState.face_width,
         faceState.face_height,
-        faceState.detection_confidence
+        faceState.detection_confidence,
+        faceState.head_symmetry // NEW DATA POINT
       ];
 
       csvData.push(row);
@@ -565,6 +569,7 @@
         dbgCount.textContent = `FACE COUNT: ${faceState.face_count}`;
         dbgSize.textContent = `FACE SIZE: ${faceState.face_width} × ${faceState.face_height}`;
         dbgConf.textContent = `CONFIDENCE: ${faceState.detection_confidence}`;
+        dbgSym.textContent = `SYMMETRY: ${faceState.head_symmetry}`; // UPDATE NEW UI
         dbgState.textContent = `AUTO STATE: ${faceState.engaged}`;
         dbgTime.textContent = `VIDEO TIME: ${videoTime.toFixed(2)}s`;
       }
@@ -605,6 +610,7 @@
             face_width: 0,
             face_height: 0,
             detection_confidence: 0,
+            head_symmetry: 0,
             engaged: 0
           };
           requestAnimationFrame(detectLoop);
@@ -630,10 +636,32 @@
           faceCy > vidH * margin &&
           faceCy < vidH * (1 - margin);
 
+        // --- HEAD POSE SYMMETRY LOGIC ---
+        let symmetry = 1.0; 
+        let isFrontal = true;
+
+        const keypoints = detection.keypoints;
+        if (keypoints && keypoints.length >= 3) {
+          const rightEye = keypoints[0];
+          const leftEye = keypoints[1];
+          const nose = keypoints[2];
+
+          // Calculate distance from nose to each eye using Pythagorean theorem
+          const distRight = Math.hypot(nose.x - rightEye.x, nose.y - rightEye.y);
+          const distLeft = Math.hypot(nose.x - leftEye.x, nose.y - leftEye.y);
+
+          // Ratio of the smaller distance to the larger distance
+          symmetry = Math.min(distLeft, distRight) / Math.max(distLeft, distRight);
+
+          // Threshold: If symmetry drops below 0.5, they have turned their head too far
+          const MIN_SYMMETRY = 0.5;
+          isFrontal = symmetry >= MIN_SYMMETRY;
+        }
+
         // Calculate strict engagement
         const MIN_CONFIDENCE = 0.65;
         const isConfident = score >= MIN_CONFIDENCE;
-        const isEngaged = centered && isConfident;
+        const isEngaged = centered && isConfident && isFrontal;
 
         faceState = {
           face_detected: 1,
@@ -642,6 +670,7 @@
           face_width: Math.round(box.width),
           face_height: Math.round(box.height),
           detection_confidence: Number(score.toFixed(3)),
+          head_symmetry: Number(symmetry.toFixed(3)), 
           engaged: isEngaged ? 1 : 0 
         };
 
@@ -666,7 +695,7 @@
     }
 
     /************************************************************
-    KEYBOARD LISTENER (ESC TO ABORT) - Kept as a fallback
+    KEYBOARD LISTENER (ESC TO ABORT)
     ************************************************************/
     document.addEventListener("keydown", (e) => {
       if (e.code === "Escape") {
