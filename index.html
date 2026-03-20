@@ -2,7 +2,7 @@
 <html>
 <head>
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Auto Looking Logger - Local Edition</title>
+  <title>Auto Looking Logger - Raw Data Edition</title>
 
   <style>
     body {
@@ -49,7 +49,6 @@
       cursor: pointer;
     }
 
-    /* Manual Download Button (Appears at end) */
     #downloadBtn {
       position: absolute;
       bottom: 20px;
@@ -65,7 +64,6 @@
     }
     #downloadBtn:hover { background: #00aa55; }
 
-    /* Stop Button (Appears during playback) */
     #stopBtn {
       position: absolute;
       top: 20px;
@@ -146,9 +144,7 @@
       <div id="overlay">
         <div>
           <h2>Auto Looking Logger</h2>
-          <p>
-            Tap Start to begin video playback and automatic sampling.
-          </p>
+          <p>Tap Start to begin video playback and automatic sampling.</p>
           <button id="startBtn">Start</button>
         </div>
       </div>
@@ -173,7 +169,7 @@
       <div class="kv" id="dbgCount">FACE COUNT: —</div>
       <div class="kv" id="dbgSize">FACE SIZE: —</div>
       <div class="kv" id="dbgConf">CONFIDENCE: —</div>
-      <div class="kv" id="dbgSym">SYMMETRY: —</div> <div class="kv" id="dbgState">AUTO STATE: —</div>
+      <div class="kv" id="dbgSym">SYMMETRY: —</div>
       <div class="kv" id="dbgTime">VIDEO TIME: —</div>
       <div class="kv" id="dbgPost">SAVE STATUS: —</div>
     </div>
@@ -185,21 +181,12 @@
       FilesetResolver
     } from "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision/vision_bundle.mjs";
 
-    /************************************************************
-    URL PARAMETERS
-    Required: ?pid=P001&vid=V01&yt=YOUTUBE_ID
-    Optional: &debug=1
-    ************************************************************/
     const params = new URLSearchParams(location.search);
-
     const PID = params.get("pid") || "P001";
     const VID = params.get("vid") || "V01";
     const YOUTUBE_ID = params.get("yt") || "";
     const DEBUG = params.get("debug") === "1";
 
-    /************************************************************
-    SESSION / STATE
-    ************************************************************/
     const SESSION_ID = "auto_sess_" + Date.now() + "_" + Math.floor(Math.random() * 100000);
 
     let player = null;
@@ -207,13 +194,12 @@
     let sessionEnded = false;
     let eventIndex = 0;
 
-    // Local CSV Storage
     let csvData = [];
+    // Removed "engaged" from headers
     const CSV_HEADERS = [
       "timestamp", "session_id", "participant_id", "video_id", "youtube_id", 
-      "event_index", "video_time", "engaged", "key", "face_detected", 
-      "face_centered", "face_count", "face_width", "face_height", "detection_confidence",
-      "head_symmetry" // NEW HEADER
+      "event_index", "video_time", "key", "face_detected", "face_centered", 
+      "face_count", "face_width", "face_height", "detection_confidence", "head_symmetry"
     ];
 
     let sampleTimer = null;
@@ -222,6 +208,7 @@
     let faceDetector = null;
     let detectionLoopRunning = false;
 
+    // Removed "engaged" from state
     let faceState = {
       face_detected: 0,
       face_centered: 0,
@@ -229,18 +216,15 @@
       face_width: 0,
       face_height: 0,
       detection_confidence: 0,
-      head_symmetry: 0, // NEW STATE VARIABLE
-      engaged: 0
+      head_symmetry: 0
     };
 
-    // DOM Elements
     const debug = document.getElementById("debug");
     const overlay = document.getElementById("overlay");
     const startBtn = document.getElementById("startBtn");
     const stopBtn = document.getElementById("stopBtn");
     const downloadBtn = document.getElementById("downloadBtn");
     const debugPane = document.getElementById("debugPane");
-
     const camVideo = document.getElementById("camVideo");
     const camCanvas = document.getElementById("camCanvas");
     const camCtx = camCanvas.getContext("2d");
@@ -251,8 +235,7 @@
     const dbgCount = document.getElementById("dbgCount");
     const dbgSize = document.getElementById("dbgSize");
     const dbgConf = document.getElementById("dbgConf");
-    const dbgSym = document.getElementById("dbgSym"); // NEW DEBUG ELEMENT
-    const dbgState = document.getElementById("dbgState");
+    const dbgSym = document.getElementById("dbgSym");
     const dbgTime = document.getElementById("dbgTime");
     const dbgPost = document.getElementById("dbgPost");
 
@@ -260,110 +243,60 @@
 
     await init();
 
-    /************************************************************
-    INIT
-    ************************************************************/
     async function init() {
       if (!YOUTUBE_ID) {
-        debug.textContent =
-          `❌ Missing YouTube ID in URL\n` +
-          `Expected ?pid=P001&vid=V01&yt=YOUTUBE_ID`;
+        debug.textContent = `❌ Missing YouTube ID in URL\nExpected ?pid=P001&vid=V01&yt=YOUTUBE_ID`;
         return;
       }
-
       try {
         debug.textContent = "Initializing MediaPipe...";
         await initFaceDetector();
-
         debug.textContent = "Initializing YouTube player...";
         initPlayer(YOUTUBE_ID);
-
-        debug.textContent =
-          `Ready\n` +
-          `Participant: ${PID}\n` +
-          `Video: ${VID}\n` +
-          `YouTube ID: ${YOUTUBE_ID}\n` +
-          `Session: ${SESSION_ID}\n` +
-          `Debug: ${DEBUG ? "ON" : "OFF"}\n` +
-          `Tap Start`;
+        debug.textContent = `Ready\nParticipant: ${PID}\nVideo: ${VID}\nYouTube ID: ${YOUTUBE_ID}\nSession: ${SESSION_ID}\nDebug: ${DEBUG ? "ON" : "OFF"}\nTap Start`;
       } catch (err) {
-        debug.textContent =
-          `❌ Init failed\n` +
-          `${err && err.message ? err.message : String(err)}`;
+        debug.textContent = `❌ Init failed\n${err && err.message ? err.message : String(err)}`;
       }
     }
 
-    /************************************************************
-    INITIALIZE MEDIAPIPE FACE DETECTOR
-    ************************************************************/
     async function initFaceDetector() {
       const filesetResolver = await FilesetResolver.forVisionTasks(
         "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision/wasm"
       );
-
       faceDetector = await FaceDetector.createFromOptions(filesetResolver, {
         baseOptions: {
-          modelAssetPath:
-            "https://storage.googleapis.com/mediapipe-models/face_detector/blaze_face_short_range/float16/1/blaze_face_short_range.tflite"
+          modelAssetPath: "https://storage.googleapis.com/mediapipe-models/face_detector/blaze_face_short_range/float16/1/blaze_face_short_range.tflite"
         },
         runningMode: "VIDEO",
         minDetectionConfidence: 0.5
       });
-
       detectorReady = true;
     }
 
-    /************************************************************
-    CREATE YOUTUBE PLAYER
-    ************************************************************/
     function initPlayer(youtubeId) {
       const tag = document.createElement("script");
       tag.src = "https://www.youtube.com/iframe_api";
       document.head.appendChild(tag);
-
       window.onYouTubeIframeAPIReady = function () {
         player = new YT.Player("player", {
           videoId: youtubeId,
-          playerVars: {
-            controls: 0,
-            rel: 0,
-            modestbranding: 1,
-            playsinline: 1
-          },
-          events: {
-            onReady: onPlayerReady,
-            onStateChange: onPlayerStateChange
-          }
+          playerVars: { controls: 0, rel: 0, modestbranding: 1, playsinline: 1 },
+          events: { onReady: onPlayerReady, onStateChange: onPlayerStateChange }
         });
       };
     }
 
     function onPlayerReady() {
-      debug.textContent =
-        `Ready\n` +
-        `Participant: ${PID}\n` +
-        `Video: ${VID}\n` +
-        `Session: ${SESSION_ID}\n` +
-        `Tap Start`;
+      debug.textContent = `Ready\nParticipant: ${PID}\nVideo: ${VID}\nSession: ${SESSION_ID}\nTap Start`;
     }
 
-    /************************************************************
-    START CAMERA
-    ************************************************************/
     async function startCamera() {
       if (cameraReady) return;
-
       dbgCam.textContent = "CAMERA: requesting permission...";
-
-      const stream = await navigator.mediaDevices.getUserMedia({
-        video: { facingMode: "user" },
-        audio: false
-      });
-
+      const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "user" }, audio: false });
       camVideo.srcObject = stream;
       await camVideo.play();
       await waitForCameraReady();
-
       cameraReady = true;
       dbgCam.textContent = `CAMERA: ready (${camVideo.videoWidth}×${camVideo.videoHeight})`;
     }
@@ -372,22 +305,18 @@
       return new Promise((resolve, reject) => {
         const timeoutMs = 5000;
         const start = Date.now();
-
         function check() {
           if (camVideo.videoWidth > 0 && camVideo.videoHeight > 0) {
             resizeDebugCanvas();
             resolve();
             return;
           }
-
           if (Date.now() - start > timeoutMs) {
             reject(new Error("Camera video did not become ready in time."));
             return;
           }
-
           requestAnimationFrame(check);
         }
-
         check();
       });
     }
@@ -400,106 +329,66 @@
 
     window.addEventListener("resize", resizeDebugCanvas);
 
-    /************************************************************
-    START SESSION
-    ************************************************************/
     startBtn.addEventListener("click", startSession);
 
     async function startSession() {
       if (!player || started) return;
-
       try {
         overlay.style.display = "none";
         await startCamera();
-
-        if (!detectorReady) {
-          throw new Error("Face detector not ready.");
-        }
-
+        if (!detectorReady) throw new Error("Face detector not ready.");
+        
         player.seekTo(0, true);
         player.playVideo();
-
         started = true;
         sessionEnded = false;
-        
-        // Show the Stop Button
         stopBtn.style.display = "block";
-
+        
         startDetectionLoop();
         logAutoEvent("AUTO_START");
-
+        
         sampleTimer = setInterval(() => {
           if (!started || sessionEnded) return;
-          
-          // Only log a sample if the video is currently PLAYING
-          if (player && player.getPlayerState() !== YT.PlayerState.PLAYING) {
-            return; 
-          }
-          
+          if (player && player.getPlayerState() !== YT.PlayerState.PLAYING) return; 
           logAutoEvent("AUTO_SAMPLE");
         }, 1000);
-
       } catch (err) {
-        debug.textContent =
-          `❌ Could not start session\n` +
-          `Participant: ${PID}\n` +
-          `Error: ${err && err.message ? err.message : String(err)}`;
-
+        debug.textContent = `❌ Could not start session\nParticipant: ${PID}\nError: ${err && err.message ? err.message : String(err)}`;
         overlay.style.display = "flex";
       }
     }
 
-    /************************************************************
-    PLAYER STATE CHANGE & TERMINATE
-    ************************************************************/
     function onPlayerStateChange(event) {
       if (started && !sessionEnded && event.data === YT.PlayerState.ENDED) {
         sessionEnded = true;
         clearInterval(sampleTimer);
-        
-        stopBtn.style.display = "none"; // Hide Stop Button
-        downloadBtn.style.display = "block"; // Show Manual Download Button
-        
+        stopBtn.style.display = "none"; 
+        downloadBtn.style.display = "block"; 
         logAutoEvent("SESSION_COMPLETE");
-        downloadCSV(); // Auto download
+        downloadCSV(); 
       }
     }
 
     function terminateSession() {
       if (!started || sessionEnded) return;
-
       sessionEnded = true;
       clearInterval(sampleTimer);
-
-      if (player && player.pauseVideo) {
-        player.pauseVideo();
-      }
-
-      stopBtn.style.display = "none"; // Hide Stop Button
-      downloadBtn.style.display = "block"; // Show Manual Download Button
-      
+      if (player && player.pauseVideo) player.pauseVideo();
+      stopBtn.style.display = "none"; 
+      downloadBtn.style.display = "block"; 
       logAutoEvent("SESSION_ABORT");
-      downloadCSV(); // Auto download
+      downloadCSV(); 
     }
 
-    // Stop Button Listener
-    stopBtn.addEventListener("click", () => {
-      terminateSession();
-    });
+    stopBtn.addEventListener("click", () => terminateSession());
 
-    /************************************************************
-    LOG AUTO EVENT (LOCAL ARRAY)
-    ************************************************************/
     function logAutoEvent(key) {
       const t = player && player.getCurrentTime ? player.getCurrentTime() : 0;
       updateDebug(t, key);
 
-      // Add headers on first run
-      if (csvData.length === 0) {
-        csvData.push(CSV_HEADERS);
-      }
+      if (csvData.length === 0) csvData.push(CSV_HEADERS);
 
-      // Create row
+      // Removed faceState.engaged from the array entirely
       const row = [
         new Date().toISOString(),
         SESSION_ID,
@@ -508,7 +397,6 @@
         YOUTUBE_ID,
         eventIndex++,
         Number(t.toFixed(3)),
-        faceState.engaged,
         key,
         faceState.face_detected,
         faceState.face_centered,
@@ -516,52 +404,32 @@
         faceState.face_width,
         faceState.face_height,
         faceState.detection_confidence,
-        faceState.head_symmetry // NEW DATA POINT
+        faceState.head_symmetry
       ];
 
       csvData.push(row);
       dbgPost.textContent = `SAVE STATUS: ${csvData.length - 1} rows saved locally.`;
     }
 
-    /************************************************************
-    DOWNLOAD CSV FILE
-    ************************************************************/
     function downloadCSV() {
-      if (csvData.length <= 1) return; // Don't download empty data
-
+      if (csvData.length <= 1) return; 
       const csvString = csvData.map(row => row.join(",")).join("\n");
       const blob = new Blob([csvString], { type: "text/csv;charset=utf-8;" });
       const url = URL.createObjectURL(blob);
-
       const link = document.createElement("a");
       link.setAttribute("href", url);
-      
-      // Saved format: pid_vid_sessionid.csv
       link.setAttribute("download", `${PID}_${VID}_${SESSION_ID}.csv`);
-      
       link.style.display = "none";
       document.body.appendChild(link);
       link.click();
       document.body.removeChild(link);
-
       dbgPost.textContent = "SAVE STATUS: CSV DOWNLOADED!";
     }
 
-    // Manual Download Button Listener
-    downloadBtn.addEventListener("click", () => {
-      downloadCSV();
-    });
+    downloadBtn.addEventListener("click", () => downloadCSV());
 
-    /************************************************************
-    UPDATE DEBUG PANELS
-    ************************************************************/
     function updateDebug(videoTime, key) {
-      debug.textContent =
-        `Participant: ${PID}\n` +
-        `Video: ${VID}\n` +
-        `video_time: ${videoTime.toFixed(2)}\n` +
-        `engaged: ${faceState.engaged}\n` +
-        `key: ${key}`;
+      debug.textContent = `Participant: ${PID}\nVideo: ${VID}\nvideo_time: ${videoTime.toFixed(2)}\nkey: ${key}`;
 
       if (DEBUG) {
         dbgFace.textContent = `FACE: ${faceState.face_detected ? "YES" : "NO"}`;
@@ -569,15 +437,11 @@
         dbgCount.textContent = `FACE COUNT: ${faceState.face_count}`;
         dbgSize.textContent = `FACE SIZE: ${faceState.face_width} × ${faceState.face_height}`;
         dbgConf.textContent = `CONFIDENCE: ${faceState.detection_confidence}`;
-        dbgSym.textContent = `SYMMETRY: ${faceState.head_symmetry}`; // UPDATE NEW UI
-        dbgState.textContent = `AUTO STATE: ${faceState.engaged}`;
+        dbgSym.textContent = `SYMMETRY: ${faceState.head_symmetry}`;
         dbgTime.textContent = `VIDEO TIME: ${videoTime.toFixed(2)}s`;
       }
     }
 
-    /************************************************************
-    MEDIAPIPE DETECTION LOOP
-    ************************************************************/
     function startDetectionLoop() {
       if (detectionLoopRunning) return;
       detectionLoopRunning = true;
@@ -610,8 +474,7 @@
             face_width: 0,
             face_height: 0,
             detection_confidence: 0,
-            head_symmetry: 0,
-            engaged: 0
+            head_symmetry: 0
           };
           requestAnimationFrame(detectLoop);
           return;
@@ -619,49 +482,29 @@
 
         const detection = detections[0];
         const box = detection.boundingBox;
-        const score = detection.categories && detection.categories[0]
-          ? detection.categories[0].score
-          : 0;
+        const score = detection.categories && detection.categories[0] ? detection.categories[0].score : 0;
 
         const vidW = camVideo.videoWidth;
         const vidH = camVideo.videoHeight;
 
         const faceCx = box.originX + box.width / 2;
         const faceCy = box.originY + box.height / 2;
-
         const margin = 0.15;
-        const centered =
-          faceCx > vidW * margin &&
-          faceCx < vidW * (1 - margin) &&
-          faceCy > vidH * margin &&
-          faceCy < vidH * (1 - margin);
+        const centered = faceCx > vidW * margin && faceCx < vidW * (1 - margin) && faceCy > vidH * margin && faceCy < vidH * (1 - margin);
 
-        // --- HEAD POSE SYMMETRY LOGIC ---
+        // --- RAW SYMMETRY LOGIC (No thresholds) ---
         let symmetry = 1.0; 
-        let isFrontal = true;
-
         const keypoints = detection.keypoints;
         if (keypoints && keypoints.length >= 3) {
           const rightEye = keypoints[0];
           const leftEye = keypoints[1];
           const nose = keypoints[2];
 
-          // Calculate distance from nose to each eye using Pythagorean theorem
           const distRight = Math.hypot(nose.x - rightEye.x, nose.y - rightEye.y);
           const distLeft = Math.hypot(nose.x - leftEye.x, nose.y - leftEye.y);
 
-          // Ratio of the smaller distance to the larger distance
           symmetry = Math.min(distLeft, distRight) / Math.max(distLeft, distRight);
-
-          // Threshold: If symmetry drops below 0.5, they have turned their head too far
-          const MIN_SYMMETRY = 0.5;
-          isFrontal = symmetry >= MIN_SYMMETRY;
         }
-
-        // Calculate strict engagement
-        const MIN_CONFIDENCE = 0.65;
-        const isConfident = score >= MIN_CONFIDENCE;
-        const isEngaged = centered && isConfident && isFrontal;
 
         faceState = {
           face_detected: 1,
@@ -670,8 +513,7 @@
           face_width: Math.round(box.width),
           face_height: Math.round(box.height),
           detection_confidence: Number(score.toFixed(3)),
-          head_symmetry: Number(symmetry.toFixed(3)), 
-          engaged: isEngaged ? 1 : 0 
+          head_symmetry: Number(symmetry.toFixed(3))
         };
 
         if (DEBUG) {
@@ -680,29 +522,13 @@
 
           camCtx.strokeStyle = centered ? "#00ff88" : "#ff3355";
           camCtx.lineWidth = 2;
-          camCtx.strokeRect(
-            box.originX * scaleX,
-            box.originY * scaleY,
-            box.width * scaleX,
-            box.height * scaleY
-          );
+          camCtx.strokeRect(box.originX * scaleX, box.originY * scaleY, box.width * scaleX, box.height * scaleY);
         }
 
         requestAnimationFrame(detectLoop);
       }
-
       requestAnimationFrame(detectLoop);
     }
-
-    /************************************************************
-    KEYBOARD LISTENER (ESC TO ABORT)
-    ************************************************************/
-    document.addEventListener("keydown", (e) => {
-      if (e.code === "Escape") {
-        e.preventDefault();
-        terminateSession();
-      }
-    });
   </script>
 </body>
 </html>
