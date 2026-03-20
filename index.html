@@ -49,6 +49,7 @@
       cursor: pointer;
     }
 
+    /* Manual Download Button (Appears at end) */
     #downloadBtn {
       position: absolute;
       bottom: 20px;
@@ -58,14 +59,27 @@
       font-weight: bold;
       border: none;
       border-radius: 6px;
-      display: none; /* Hidden until the session stops */
+      display: none; 
       z-index: 1000;
       box-shadow: 0 4px 6px rgba(0,0,0,0.3);
     }
-    
-    #downloadBtn:hover {
-      background: #00aa55;
+    #downloadBtn:hover { background: #00aa55; }
+
+    /* Stop Button (Appears during playback) */
+    #stopBtn {
+      position: absolute;
+      top: 20px;
+      right: 20px;
+      background: #ff3355;
+      color: white;
+      font-weight: bold;
+      border: none;
+      border-radius: 6px;
+      display: none; 
+      z-index: 1000;
+      box-shadow: 0 4px 6px rgba(0,0,0,0.3);
     }
+    #stopBtn:hover { background: #dd2244; }
 
     #debug {
       position: absolute;
@@ -133,13 +147,13 @@
         <div>
           <h2>Auto Looking Logger</h2>
           <p>
-            Tap Start to begin video playback and automatic sampling.<br>
-            Press Escape to abort the session and download data.
+            Tap Start to begin video playback and automatic sampling.
           </p>
           <button id="startBtn">Start</button>
         </div>
       </div>
 
+      <button id="stopBtn">⏹ Stop & Save</button>
       <button id="downloadBtn">📥 Download Data (CSV)</button>
 
       <div id="debug">Loading...</div>
@@ -221,6 +235,7 @@
     const debug = document.getElementById("debug");
     const overlay = document.getElementById("overlay");
     const startBtn = document.getElementById("startBtn");
+    const stopBtn = document.getElementById("stopBtn");
     const downloadBtn = document.getElementById("downloadBtn");
     const debugPane = document.getElementById("debugPane");
 
@@ -403,12 +418,21 @@
 
         started = true;
         sessionEnded = false;
+        
+        // Show the Stop Button
+        stopBtn.style.display = "block";
 
         startDetectionLoop();
         logAutoEvent("AUTO_START");
 
         sampleTimer = setInterval(() => {
           if (!started || sessionEnded) return;
+          
+          // Only log a sample if the video is currently PLAYING
+          if (player && player.getPlayerState() !== YT.PlayerState.PLAYING) {
+            return; 
+          }
+          
           logAutoEvent("AUTO_SAMPLE");
         }, 1000);
 
@@ -429,7 +453,10 @@
       if (started && !sessionEnded && event.data === YT.PlayerState.ENDED) {
         sessionEnded = true;
         clearInterval(sampleTimer);
-        downloadBtn.style.display = "block"; // Show manual button
+        
+        stopBtn.style.display = "none"; // Hide Stop Button
+        downloadBtn.style.display = "block"; // Show Manual Download Button
+        
         logAutoEvent("SESSION_COMPLETE");
         downloadCSV(); // Auto download
       }
@@ -445,10 +472,17 @@
         player.pauseVideo();
       }
 
-      downloadBtn.style.display = "block"; // Show manual button
+      stopBtn.style.display = "none"; // Hide Stop Button
+      downloadBtn.style.display = "block"; // Show Manual Download Button
+      
       logAutoEvent("SESSION_ABORT");
       downloadCSV(); // Auto download
     }
+
+    // Stop Button Listener
+    stopBtn.addEventListener("click", () => {
+      terminateSession();
+    });
 
     /************************************************************
     LOG AUTO EVENT (LOCAL ARRAY)
@@ -497,7 +531,10 @@
 
       const link = document.createElement("a");
       link.setAttribute("href", url);
-      link.setAttribute("download", `${PID}_${VID}_session_data.csv`);
+      
+      // Saved format: pid_vid_sessionid.csv
+      link.setAttribute("download", `${PID}_${VID}_${SESSION_ID}.csv`);
+      
       link.style.display = "none";
       document.body.appendChild(link);
       link.click();
@@ -593,6 +630,11 @@
           faceCy > vidH * margin &&
           faceCy < vidH * (1 - margin);
 
+        // Calculate strict engagement
+        const MIN_CONFIDENCE = 0.65;
+        const isConfident = score >= MIN_CONFIDENCE;
+        const isEngaged = centered && isConfident;
+
         faceState = {
           face_detected: 1,
           face_centered: centered ? 1 : 0,
@@ -600,7 +642,7 @@
           face_width: Math.round(box.width),
           face_height: Math.round(box.height),
           detection_confidence: Number(score.toFixed(3)),
-          engaged: centered ? 1 : 0
+          engaged: isEngaged ? 1 : 0 
         };
 
         if (DEBUG) {
@@ -624,7 +666,7 @@
     }
 
     /************************************************************
-    KEYBOARD LISTENER (ESC TO ABORT)
+    KEYBOARD LISTENER (ESC TO ABORT) - Kept as a fallback
     ************************************************************/
     document.addEventListener("keydown", (e) => {
       if (e.code === "Escape") {
