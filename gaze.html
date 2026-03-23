@@ -1,0 +1,371 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Eye Tracking - Fish Game Calibration</title>
+
+  <script src="https://webgazer.cs.brown.edu/webgazer.js"></script>
+
+  <style>
+    body {
+      margin: 0;
+      background: #87CEEB; /* Ocean blue background for the game */
+      font-family: system-ui;
+      overflow: hidden;
+    }
+
+    /* --- UI OVERLAYS --- */
+    #start-screen {
+      position: absolute;
+      inset: 0;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      background: rgba(0,0,0,0.85);
+      color: white;
+      z-index: 1000;
+      text-align: center;
+    }
+
+    button {
+      font-size: 20px;
+      padding: 12px 24px;
+      margin-top: 15px;
+      cursor: pointer;
+      border-radius: 8px;
+      border: none;
+      background: #00cc66;
+      color: white;
+      font-weight: bold;
+      box-shadow: 0 4px 6px rgba(0,0,0,0.3);
+    }
+    button:hover { background: #00aa55; }
+
+    #stopBtn, #downloadBtn {
+      position: absolute;
+      bottom: 20px;
+      right: 20px;
+      z-index: 999;
+      display: none;
+    }
+    #stopBtn { background: #ff3355; }
+    #stopBtn:hover { background: #dd2244; }
+
+    /* --- FISH CALIBRATION GAME --- */
+    #calibration-screen {
+      position: absolute;
+      inset: 0;
+      display: none; /* Hidden until start */
+      z-index: 500;
+    }
+    
+    .fish-btn {
+      position: absolute;
+      width: 80px;
+      height: 80px;
+      border-radius: 50%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 40px;
+      transform: translate(-50%, -50%); /* Center strictly on the exact coordinate */
+      cursor: pointer;
+      box-shadow: 0 4px 12px rgba(0,0,0,0.4);
+      user-select: none;
+      transition: transform 0.1s;
+    }
+    .fish-btn:active { transform: translate(-50%, -50%) scale(0.9); }
+
+    .blue-fish { background-color: #3399ff; border: 4px solid #0055ff; }
+    .red-fish { 
+      background-color: #ff3355; 
+      border: 4px solid #aa0022;
+      animation: pulse 1s infinite; 
+      z-index: 501; /* Make sure red fish is always clickable */
+    }
+
+    @keyframes pulse {
+      0% { box-shadow: 0 0 0 0 rgba(255, 51, 85, 0.7); }
+      70% { box-shadow: 0 0 0 20px rgba(255, 51, 85, 0); }
+      100% { box-shadow: 0 0 0 0 rgba(255, 51, 85, 0); }
+    }
+
+    /* --- VIDEO PLAYER --- */
+    #video-screen {
+      position: absolute;
+      inset: 0;
+      background: black;
+      display: none; /* Hidden until game over */
+      z-index: 400;
+    }
+    #player {
+      width: 100%;
+      height: 100%;
+    }
+
+    /* --- DEBUG PANEL --- */
+    #debug {
+      position: absolute;
+      top: 10px;
+      left: 10px;
+      background: rgba(0,0,0,0.7);
+      color: white;
+      padding: 10px;
+      font-size: 14px;
+      border-radius: 8px;
+      z-index: 999;
+      pointer-events: none;
+    }
+  </style>
+</head>
+<body>
+
+  <div id="start-screen">
+    <h2>Eye Tracking Setup</h2>
+    <p>We need to calibrate the camera first.</p>
+    <p><strong>Rule for the child:</strong> Keep your head still, look at the RED FISH, and click it!</p>
+    <button id="startBtn">Start Game & Camera</button>
+  </div>
+
+  <div id="calibration-screen">
+    </div>
+
+  <div id="video-screen">
+    <div id="player"></div>
+  </div>
+
+  <button id="stopBtn">⏹ Stop & Save Data</button>
+  <button id="downloadBtn">📥 Download CSV</button>
+
+  <div id="debug">Waiting to start...</div>
+
+  <script>
+    /************************************************************
+    URL PARAMETERS & VARIABLES
+    ************************************************************/
+    const params = new URLSearchParams(location.search);
+    const PID = params.get("pid") || "P001";
+    const VID = params.get("vid") || "V01";
+    const YOUTUBE_ID = params.get("yt") || "dQw4w9WgXcQ"; // Default video if none provided
+    const DEBUG = params.get("debug") === "1";
+
+    const SESSION_ID = "gaze_sess_" + Date.now();
+    let csvData = [];
+    const CSV_HEADERS = ["timestamp", "session_id", "participant_id", "video_id", "youtube_id", "video_time", "gaze_x", "gaze_y", "on_screen"];
+    
+    let player = null;
+    let sampleTimer = null;
+    let sessionEnded = false;
+
+    // Grid points for calibration (Percentages: Top-Left to Bottom-Right)
+    // We use 15% and 85% instead of 0/100 so the fish aren't cut off by screen edges
+    const points = [
+      {x: 15, y: 15}, {x: 50, y: 15}, {x: 85, y: 15},
+      {x: 15, y: 50}, {x: 50, y: 50}, {x: 85, y: 50},
+      {x: 15, y: 85}, {x: 50, y: 85}, {x: 85, y: 85}
+    ];
+    let remainingTargets = [];
+    let currentTargetIndex = -1;
+
+    // DOM Elements
+    const startScreen = document.getElementById("start-screen");
+    const calibScreen = document.getElementById("calibration-screen");
+    const videoScreen = document.getElementById("video-screen");
+    const debugEl = document.getElementById("debug");
+    const startBtn = document.getElementById("startBtn");
+    const stopBtn = document.getElementById("stopBtn");
+    const downloadBtn = document.getElementById("downloadBtn");
+
+    if (!DEBUG) debugEl.style.display = "none";
+
+    /************************************************************
+    YOUTUBE SETUP
+    ************************************************************/
+    const tag = document.createElement("script");
+    tag.src = "https://www.youtube.com/iframe_api";
+    document.head.appendChild(tag);
+
+    window.onYouTubeIframeAPIReady = function () {
+      player = new YT.Player("player", {
+        videoId: YOUTUBE_ID,
+        playerVars: { controls: 0, rel: 0, modestbranding: 1, playsinline: 1 },
+        events: { onStateChange: onPlayerStateChange }
+      });
+    };
+
+    /************************************************************
+    START INITIALIZATION
+    ************************************************************/
+    startBtn.addEventListener("click", async () => {
+      startScreen.style.display = "none";
+      debugEl.innerText = "Starting WebGazer & Camera...";
+      
+      // Clear old calibration data so it learns fresh for this specific child
+      webgazer.clearData();
+
+      // Initialize WebGazer
+      await webgazer.setRegression('ridge') 
+        .setTracker('TFFacemesh') 
+        .begin();
+      
+      // Hide the default WebGazer dot and video to make it less distracting, 
+      // but keep the tracking active behind the scenes.
+      webgazer.showVideoPreview(true) 
+              .showPredictionPoints(DEBUG); // Only show the red guess-dot if debug=1
+
+      // Start the Fish Game
+      setupFishGame();
+    });
+
+    /************************************************************
+    THE FISH GAME (CALIBRATION)
+    ************************************************************/
+    function setupFishGame() {
+      calibScreen.style.display = "block";
+      debugEl.innerText = "Calibrating: Catch the red fish!";
+
+      // Shuffle the order of the 9 points so it's a bit of a game
+      remainingTargets = [0, 1, 2, 3, 4, 5, 6, 7, 8].sort(() => Math.random() - 0.5);
+
+      // Create 9 HTML fish buttons
+      points.forEach((pos, index) => {
+        const fish = document.createElement("div");
+        fish.id = "fish-" + index;
+        fish.className = "fish-btn blue-fish";
+        fish.innerText = "🔵🐟";
+        fish.style.left = pos.x + "%";
+        fish.style.top = pos.y + "%";
+        
+        // When clicked, check if it's the right fish
+        fish.onclick = () => onFishClick(index);
+        calibScreen.appendChild(fish);
+      });
+
+      // Activate the first target
+      activateNextTarget();
+    }
+
+    function activateNextTarget() {
+      if (remainingTargets.length === 0) {
+        // Game Over - Calibration Complete!
+        finishCalibration();
+        return;
+      }
+
+      currentTargetIndex = remainingTargets.pop();
+      const targetFish = document.getElementById("fish-" + currentTargetIndex);
+      
+      targetFish.className = "fish-btn red-fish";
+      targetFish.innerText = "🔴🐠";
+    }
+
+    function onFishClick(clickedIndex) {
+      if (clickedIndex === currentTargetIndex) {
+        // Correct click! WebGazer just quietly recorded this click coordinate automatically.
+        
+        // Hide the caught fish
+        const caughtFish = document.getElementById("fish-" + clickedIndex);
+        caughtFish.style.display = "none";
+
+        // Spawn next target
+        activateNextTarget();
+      }
+    }
+
+    function finishCalibration() {
+      calibScreen.style.display = "none";
+      videoScreen.style.display = "block";
+      stopBtn.style.display = "block";
+      
+      // Optionally hide the WebGazer camera preview so they focus on the video
+      webgazer.showVideoPreview(false);
+
+      debugEl.innerText = "Starting Video & Logging...";
+      player.playVideo();
+      startLogging();
+    }
+
+    /************************************************************
+    DATA LOGGING LOOP
+    ************************************************************/
+    function startLogging() {
+      csvData.push(CSV_HEADERS);
+
+      sampleTimer = setInterval(() => {
+        if (sessionEnded || player.getPlayerState() !== YT.PlayerState.PLAYING) return;
+
+        const t = player.getCurrentTime ? player.getCurrentTime() : 0;
+        
+        // Get current eye gaze estimation
+        let prediction = webgazer.getCurrentPrediction();
+        
+        let gazeX = -1;
+        let gazeY = -1;
+        let onScreen = 0;
+
+        if (prediction) {
+          gazeX = Math.round(prediction.x);
+          gazeY = Math.round(prediction.y);
+
+          // Check if coordinates are within the screen window boundaries
+          if (gazeX >= 0 && gazeX <= window.innerWidth && 
+              gazeY >= 0 && gazeY <= window.innerHeight) {
+            onScreen = 1;
+          }
+        }
+
+        if (DEBUG) {
+          debugEl.innerText = `Time: ${t.toFixed(1)}s | X:${gazeX} Y:${gazeY} | OnScreen: ${onScreen}`;
+        }
+
+        // Save row
+        const row = [
+          new Date().toISOString(), SESSION_ID, PID, VID, YOUTUBE_ID, 
+          Number(t.toFixed(3)), gazeX, gazeY, onScreen
+        ];
+        csvData.push(row);
+
+      }, 1000); // 1-second interval
+    }
+
+    /************************************************************
+    END SESSION & DOWNLOAD
+    ************************************************************/
+    function onPlayerStateChange(event) {
+      if (!sessionEnded && event.data === YT.PlayerState.ENDED) {
+        endSession();
+      }
+    }
+
+    stopBtn.addEventListener("click", () => endSession());
+
+    function endSession() {
+      sessionEnded = true;
+      clearInterval(sampleTimer);
+      if (player && player.pauseVideo) player.pauseVideo();
+      webgazer.end(); // Stop webcam
+      
+      stopBtn.style.display = "none";
+      downloadBtn.style.display = "block";
+      downloadCSV();
+    }
+
+    function downloadCSV() {
+      if (csvData.length <= 1) return;
+      const csvString = csvData.map(row => row.join(",")).join("\n");
+      const blob = new Blob([csvString], { type: "text/csv;charset=utf-8;" });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.setAttribute("href", url);
+      link.setAttribute("download", `GAZE_${PID}_${VID}.csv`);
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      debugEl.innerText = "CSV Downloaded!";
+    }
+
+    downloadBtn.addEventListener("click", () => downloadCSV());
+  </script>
+</body>
+</html>
