@@ -104,6 +104,12 @@
       height: 100%;
     }
 
+    /* Force WebGazer camera elements to the very front */
+    #webgazerVideoFeed, #webgazerVideoCanvas, #webgazerFaceOverlay, #webgazerFaceFeedbackBox {
+      z-index: 9999 !important;
+      display: block !important;
+    }
+
     /* --- DEBUG PANEL --- */
     #debug {
       position: absolute;
@@ -198,22 +204,22 @@
     START INITIALIZATION
     ************************************************************/
     startBtn.addEventListener("click", async () => {
-      startScreen.style.display = "none";
-      debugEl.innerText = "Starting WebGazer & Camera...";
-      
-      // Clear old calibration data so it learns fresh for this specific child
-      webgazer.clearData();
-
-      // Initialize WebGazer
-      await webgazer.begin();
-      
-      // Hide the default WebGazer dot and video to make it less distracting
-            webgazer.showVideo(true) 
-                    .showPredictionPoints(DEBUG);
-
-      // Start the Fish Game
-      setupFishGame();
-    });
+          startScreen.style.display = "none";
+          debugEl.innerText = "Warming up camera... please center your face!";
+          
+          webgazer.clearData();
+    
+          // Initialize WebGazer
+          await webgazer.begin();
+          
+          webgazer.showVideo(true) 
+                  .showPredictionPoints(DEBUG);
+    
+          // Give the AI 3 seconds to turn on the camera and find your face
+          setTimeout(() => {
+            setupFishGame();
+          }, 3000);
+        });
 
     /************************************************************
     THE FISH GAME (CALIBRATION)
