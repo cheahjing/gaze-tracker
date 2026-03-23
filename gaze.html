@@ -146,14 +146,14 @@
 
   <div id="debug">Waiting to start...</div>
 
-  <script>
+<script>
     /************************************************************
     URL PARAMETERS & VARIABLES
     ************************************************************/
     const params = new URLSearchParams(location.search);
     const PID = params.get("pid") || "P001";
     const VID = params.get("vid") || "V01";
-    const YOUTUBE_ID = params.get("yt") || "dQw4w9WgXcQ"; // Default video if none provided
+    const YOUTUBE_ID = params.get("yt") || "dQw4w9WgXcQ"; 
     const DEBUG = params.get("debug") === "1";
 
     const SESSION_ID = "gaze_sess_" + Date.now();
@@ -164,8 +164,6 @@
     let sampleTimer = null;
     let sessionEnded = false;
 
-    // Grid points for calibration (Percentages: Top-Left to Bottom-Right)
-    // We use 15% and 85% instead of 0/100 so the fish aren't cut off by screen edges
     const points = [
       {x: 15, y: 15}, {x: 50, y: 15}, {x: 85, y: 15},
       {x: 15, y: 50}, {x: 50, y: 50}, {x: 85, y: 50},
@@ -174,7 +172,6 @@
     let remainingTargets = [];
     let currentTargetIndex = -1;
 
-    // DOM Elements
     const startScreen = document.getElementById("start-screen");
     const calibScreen = document.getElementById("calibration-screen");
     const videoScreen = document.getElementById("video-screen");
@@ -203,23 +200,30 @@
     /************************************************************
     START INITIALIZATION
     ************************************************************/
-    startBtn.addEventListener("click", async () => {
-          startScreen.style.display = "none";
-          debugEl.innerText = "Warming up camera... please center your face!";
+    startBtn.addEventListener("click", () => {
+      startScreen.style.display = "none";
+      debugEl.innerText = "Please click 'Allow' for the camera and wait...";
+      
+      webgazer.clearData();
+
+      // Initialize WebGazer and start the camera
+      webgazer.setGazeListener(function(data, elapsedTime) {}).begin();
+      webgazer.showVideo(true).showPredictionPoints(DEBUG);
+
+      // We use a polling interval to wait until WebGazer is ACTUALLY ready
+      // This prevents the game from starting while the permissions box is open
+      let checkReadyTimer = setInterval(() => {
+        if (webgazer.isReady()) {
+          clearInterval(checkReadyTimer);
+          debugEl.innerText = "Camera ready! Please center your face in the green box.";
           
-          webgazer.clearData();
-    
-          // Initialize WebGazer
-          await webgazer.begin();
-          
-          webgazer.showVideo(true) 
-                  .showPredictionPoints(DEBUG);
-    
-          // Give the AI 3 seconds to turn on the camera and find your face
+          // Now that camera is visually on, wait 4 seconds for user to center face
           setTimeout(() => {
             setupFishGame();
-          }, 3000);
-        });
+          }, 4000);
+        }
+      }, 500);
+    });
 
     /************************************************************
     THE FISH GAME (CALIBRATION)
@@ -228,10 +232,8 @@
       calibScreen.style.display = "block";
       debugEl.innerText = "Calibrating: Catch the red fish!";
 
-      // Shuffle the order of the 9 points so it's a bit of a game
       remainingTargets = [0, 1, 2, 3, 4, 5, 6, 7, 8].sort(() => Math.random() - 0.5);
 
-      // Create 9 HTML fish buttons
       points.forEach((pos, index) => {
         const fish = document.createElement("div");
         fish.id = "fish-" + index;
@@ -240,18 +242,15 @@
         fish.style.left = pos.x + "%";
         fish.style.top = pos.y + "%";
         
-        // When clicked, check if it's the right fish
         fish.onclick = () => onFishClick(index);
         calibScreen.appendChild(fish);
       });
 
-      // Activate the first target
       activateNextTarget();
     }
 
     function activateNextTarget() {
       if (remainingTargets.length === 0) {
-        // Game Over - Calibration Complete!
         finishCalibration();
         return;
       }
@@ -265,13 +264,8 @@
 
     function onFishClick(clickedIndex) {
       if (clickedIndex === currentTargetIndex) {
-        // Correct click! WebGazer just quietly recorded this click coordinate automatically.
-        
-        // Hide the caught fish
         const caughtFish = document.getElementById("fish-" + clickedIndex);
         caughtFish.style.display = "none";
-
-        // Spawn next target
         activateNextTarget();
       }
     }
@@ -281,7 +275,6 @@
       videoScreen.style.display = "block";
       stopBtn.style.display = "block";
       
-      // Optionally hide the WebGazer camera preview so they focus on the video
       webgazer.showVideo(false);
 
       debugEl.innerText = "Starting Video & Logging...";
@@ -299,19 +292,17 @@
         if (sessionEnded || player.getPlayerState() !== YT.PlayerState.PLAYING) return;
 
         const t = player.getCurrentTime ? player.getCurrentTime() : 0;
-        
-        // Get current eye gaze estimation
         let prediction = webgazer.getCurrentPrediction();
         
         let gazeX = -1;
         let gazeY = -1;
         let onScreen = 0;
 
-        if (prediction) {
+        // Strict safeguard to prevent NaN from crashing the logger
+        if (prediction && !isNaN(prediction.x) && !isNaN(prediction.y)) {
           gazeX = Math.round(prediction.x);
           gazeY = Math.round(prediction.y);
 
-          // Check if coordinates are within the screen window boundaries
           if (gazeX >= 0 && gazeX <= window.innerWidth && 
               gazeY >= 0 && gazeY <= window.innerHeight) {
             onScreen = 1;
@@ -322,14 +313,13 @@
           debugEl.innerText = `Time: ${t.toFixed(1)}s | X:${gazeX} Y:${gazeY} | OnScreen: ${onScreen}`;
         }
 
-        // Save row
         const row = [
           new Date().toISOString(), SESSION_ID, PID, VID, YOUTUBE_ID, 
           Number(t.toFixed(3)), gazeX, gazeY, onScreen
         ];
         csvData.push(row);
 
-      }, 1000); // 1-second interval
+      }, 1000); 
     }
 
     /************************************************************
@@ -347,7 +337,9 @@
       sessionEnded = true;
       clearInterval(sampleTimer);
       if (player && player.pauseVideo) player.pauseVideo();
-      webgazer.end(); // Stop webcam
+      
+      // Wrapped in a try-catch so it never breaks the download button
+      try { webgazer.pause(); } catch(e) { console.log("WebGazer pause error", e); }
       
       stopBtn.style.display = "none";
       downloadBtn.style.display = "block";
@@ -355,7 +347,10 @@
     }
 
     function downloadCSV() {
-      if (csvData.length <= 1) return;
+      if (csvData.length <= 1) {
+        alert("No gaze data was recorded! Make sure the camera is working.");
+        return;
+      }
       const csvString = csvData.map(row => row.join(",")).join("\n");
       const blob = new Blob([csvString], { type: "text/csv;charset=utf-8;" });
       const url = URL.createObjectURL(blob);
@@ -370,5 +365,3 @@
 
     downloadBtn.addEventListener("click", () => downloadCSV());
   </script>
-</body>
-</html>
