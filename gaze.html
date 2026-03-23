@@ -205,9 +205,7 @@
       webgazer.clearData();
 
       // Initialize WebGazer
-      await webgazer.setRegression('ridge') 
-        .setTracker('TFFacemesh') 
-        .begin();
+      await webgazer.begin();
       
       // Hide the default WebGazer dot and video to make it less distracting, 
       // but keep the tracking active behind the scenes.
