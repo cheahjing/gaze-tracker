@@ -207,10 +207,9 @@
       // Initialize WebGazer
       await webgazer.begin();
       
-      // Hide the default WebGazer dot and video to make it less distracting, 
-      // but keep the tracking active behind the scenes.
-      webgazer.showVideoPreview(true) 
-              .showPredictionPoints(DEBUG); // Only show the red guess-dot if debug=1
+      // Hide the default WebGazer dot and video to make it less distracting
+            webgazer.showVideo(true) 
+                    .showPredictionPoints(DEBUG);
 
       // Start the Fish Game
       setupFishGame();
@@ -277,7 +276,7 @@
       stopBtn.style.display = "block";
       
       // Optionally hide the WebGazer camera preview so they focus on the video
-      webgazer.showVideoPreview(false);
+      webgazer.showVideo(false);
 
       debugEl.innerText = "Starting Video & Logging...";
       player.playVideo();
