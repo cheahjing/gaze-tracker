@@ -63,16 +63,17 @@
       100% { box-shadow: 0 0 0 0 rgba(255, 51, 85, 0); }
     }
 
-    /* Tracking Status Text */
     #status-text {
       font-size: 50px;
       font-weight: bold;
     }
 
-    /* Force WebGazer elements to be visible */
-    #webgazerVideoFeed, #webgazerVideoCanvas, #webgazerFaceOverlay, #webgazerFaceFeedbackBox {
-      z-index: 9999 !important;
+    /* THE FIX: Aggressively force all WebGazer elements to the absolute front */
+    #webgazerVideoContainer, #webgazerVideoFeed, #webgazerVideoCanvas, #webgazerFaceOverlay, #webgazerFaceFeedbackBox {
+      z-index: 99999 !important;
+      position: fixed !important;
       display: block !important;
+      opacity: 1 !important;
     }
   </style>
 </head>
@@ -80,21 +81,20 @@
 
   <div id="start-screen">
     <h2>Eye Tracking Setup</h2>
-    <p>Click start, allow the camera, and wait for your face to appear.</p>
+    <p>Click start, allow the camera, and wait for your face to appear in the top left.</p>
     <button id="start-btn">Start Camera</button>
     <p id="loading-text" style="display:none; color: yellow;">Starting camera... please wait.</p>
   </div>
 
   <div id="calibration-screen">
     <h2 style="position: absolute; top: 20px; color: white;">Catch the RED fish!</h2>
-    </div>
+  </div>
 
   <div id="tracking-screen">
     <div id="status-text">Waiting for gaze...</div>
   </div>
 
   <script>
-    // --- State Variables ---
     let calibrationPoints = [
       {x: 15, y: 15}, {x: 50, y: 15}, {x: 85, y: 15},
       {x: 15, y: 50}, {x: 50, y: 50}, {x: 85, y: 50},
@@ -103,7 +103,6 @@
     let remainingPoints = [0, 1, 2, 3, 4, 5, 6, 7, 8];
     let currentTarget = -1;
 
-    // --- DOM Elements ---
     const startBtn = document.getElementById("start-btn");
     const loadingText = document.getElementById("loading-text");
     const startScreen = document.getElementById("start-screen");
@@ -111,35 +110,27 @@
     const trackingScreen = document.getElementById("tracking-screen");
     const statusText = document.getElementById("status-text");
 
-    // --- 1. Start WebGazer ---
     startBtn.addEventListener("click", async () => {
       startBtn.style.display = "none";
       loadingText.style.display = "block";
 
-      // Clear old data just in case
       webgazer.clearData();
 
-      // Begin WebGazer (This triggers the browser permission popup)
+      // Start WebGazer
       await webgazer.begin();
-      
-      // Show the camera feed and the guessing dot
       webgazer.showVideo(true).showPredictionPoints(true);
 
-      // Give the camera 3 seconds to fully render and find the face before showing fish
+      // Wait 4 seconds to ensure the camera UI loads on top before starting
       setTimeout(() => {
         startScreen.style.display = "none";
         startCalibration();
-      }, 3000);
+      }, 4000);
     });
 
-    // --- 2. Calibration Game ---
     function startCalibration() {
       calibScreen.style.display = "block";
-      
-      // Shuffle the order of the fish
       remainingPoints.sort(() => Math.random() - 0.5);
 
-      // Draw all 9 fish on the screen
       calibrationPoints.forEach((pos, index) => {
         const fish = document.createElement("div");
         fish.id = `fish-${index}`;
@@ -156,14 +147,12 @@
     }
 
     function activateNextFish() {
-      // If no points left, we are done calibrating!
       if (remainingPoints.length === 0) {
         calibScreen.style.display = "none";
         startTrackingActivity();
         return;
       }
 
-      // Pick the next fish to turn red
       currentTarget = remainingPoints.pop();
       const targetFish = document.getElementById(`fish-${currentTarget}`);
       targetFish.className = "fish red-fish";
@@ -171,27 +160,19 @@
     }
 
     function onFishClick(clickedIndex) {
-      // Only do something if they clicked the exact RED fish
       if (clickedIndex === currentTarget) {
         const caughtFish = document.getElementById(`fish-${clickedIndex}`);
-        caughtFish.style.display = "none"; // Hide the caught fish
-        
-        // WebGazer automatically learns from this click in the background
+        caughtFish.style.display = "none"; 
         activateNextFish();
       }
     }
 
-    // --- 3. Main Tracking Activity ---
     function startTrackingActivity() {
       trackingScreen.style.display = "flex";
-      
-      // We can hide the guessing dot now so it isn't distracting
       webgazer.showPredictionPoints(false);
 
-      // Setup a listener that fires constantly with the user's eye coordinates
       webgazer.setGazeListener((data, elapsedTime) => {
         if (data == null) {
-          // If data is null, the AI has lost the face entirely
           updateStatus(false);
           return;
         }
@@ -199,28 +180,26 @@
         const x = data.x;
         const y = data.y;
 
-        // Check if coordinates are inside the browser window
         const isInsideX = (x >= 0 && x <= window.innerWidth);
         const isInsideY = (y >= 0 && y <= window.innerHeight);
 
         if (isInsideX && isInsideY) {
-          updateStatus(true); // On Screen
+          updateStatus(true);
         } else {
-          updateStatus(false); // Off Screen
+          updateStatus(false); 
         }
       });
     }
 
-    // Update the visual text based on gaze
     function updateStatus(isOnScreen) {
       if (isOnScreen) {
         statusText.innerText = "👀 Looking at Screen!";
         statusText.style.color = "green";
-        trackingScreen.style.backgroundColor = "#e6ffe6"; // Light green background
+        trackingScreen.style.backgroundColor = "#e6ffe6"; 
       } else {
         statusText.innerText = "🙈 Looking AWAY!";
         statusText.style.color = "red";
-        trackingScreen.style.backgroundColor = "#ffe6e6"; // Light red background
+        trackingScreen.style.backgroundColor = "#ffe6e6"; 
       }
     }
   </script>
