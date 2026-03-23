@@ -111,21 +111,39 @@
     const statusText = document.getElementById("status-text");
 
     startBtn.addEventListener("click", async () => {
-      startBtn.style.display = "none";
-      loadingText.style.display = "block";
-
-      webgazer.clearData();
-
-      // Start WebGazer
-      await webgazer.begin();
-      webgazer.showVideo(true).showPredictionPoints(true);
-
-      // Wait 4 seconds to ensure the camera UI loads on top before starting
-      setTimeout(() => {
-        startScreen.style.display = "none";
-        startCalibration();
-      }, 4000);
-    });
+          startBtn.style.display = "none";
+          loadingText.style.display = "block";
+    
+          webgazer.clearData();
+    
+          // Start WebGazer
+          await webgazer.begin();
+          webgazer.showVideo(true).showPredictionPoints(true);
+    
+          // THE ENFORCER: Force the video to the front every 500ms
+          setInterval(() => {
+            const wgContainer = document.getElementById("webgazerVideoContainer");
+            const wgCanvas = document.getElementById("webgazerVideoCanvas");
+            const wgFace = document.getElementById("webgazerFaceOverlay");
+            
+            if (wgContainer) {
+              wgContainer.style.position = "fixed";
+              wgContainer.style.top = "0px";
+              wgContainer.style.left = "0px";
+              wgContainer.style.zIndex = "999999";
+              wgContainer.style.display = "block";
+              wgContainer.style.opacity = "1";
+            }
+            if (wgCanvas) wgCanvas.style.zIndex = "999999";
+            if (wgFace) wgFace.style.zIndex = "999999";
+          }, 500);
+    
+          // Wait 4 seconds to ensure the camera UI loads on top before starting
+          setTimeout(() => {
+            startScreen.style.display = "none";
+            startCalibration();
+          }, 4000);
+        });
 
     function startCalibration() {
       calibScreen.style.display = "block";
