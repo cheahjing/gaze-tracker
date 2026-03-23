@@ -1,88 +1,60 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Eye Tracking - Fish Game Calibration</title>
-
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Clean WebGazer Setup</title>
+  
   <script src="https://unpkg.com/webgazer@2.0.1/dist/webgazer.min.js"></script>
 
   <style>
     body {
       margin: 0;
-      background: #87CEEB; /* Ocean blue background for the game */
-      font-family: system-ui;
       overflow: hidden;
+      background-color: #87CEEB; /* Ocean Blue */
+      font-family: sans-serif;
     }
 
-    /* --- UI OVERLAYS --- */
-    #start-screen {
+    /* Screen Containers */
+    #start-screen, #calibration-screen, #tracking-screen {
       position: absolute;
-      inset: 0;
+      top: 0; left: 0; width: 100vw; height: 100vh;
       display: flex;
       flex-direction: column;
       align-items: center;
       justify-content: center;
-      background: rgba(0,0,0,0.85);
-      color: white;
-      z-index: 1000;
-      text-align: center;
     }
+
+    #start-screen { background: rgba(0, 0, 0, 0.8); color: white; z-index: 100; }
+    #calibration-screen { display: none; z-index: 50; }
+    #tracking-screen { display: none; background: white; z-index: 40; }
 
     button {
+      padding: 15px 30px;
       font-size: 20px;
-      padding: 12px 24px;
-      margin-top: 15px;
-      cursor: pointer;
-      border-radius: 8px;
-      border: none;
-      background: #00cc66;
+      background-color: #00cc66;
       color: white;
-      font-weight: bold;
-      box-shadow: 0 4px 6px rgba(0,0,0,0.3);
-    }
-    button:hover { background: #00aa55; }
-
-    #stopBtn, #downloadBtn {
-      position: absolute;
-      bottom: 20px;
-      right: 20px;
-      z-index: 999;
-      display: none;
-    }
-    #stopBtn { background: #ff3355; }
-    #stopBtn:hover { background: #dd2244; }
-
-    /* --- FISH CALIBRATION GAME --- */
-    #calibration-screen {
-      position: absolute;
-      inset: 0;
-      display: none; /* Hidden until start */
-      z-index: 500;
-    }
-    
-    .fish-btn {
-      position: absolute;
-      width: 80px;
-      height: 80px;
-      border-radius: 50%;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      font-size: 40px;
-      transform: translate(-50%, -50%); /* Center strictly on the exact coordinate */
+      border: none;
+      border-radius: 8px;
       cursor: pointer;
-      box-shadow: 0 4px 12px rgba(0,0,0,0.4);
-      user-select: none;
-      transition: transform 0.1s;
     }
-    .fish-btn:active { transform: translate(-50%, -50%) scale(0.9); }
+    button:hover { background-color: #00aa55; }
 
-    .blue-fish { background-color: #3399ff; border: 4px solid #0055ff; }
+    /* Fish Game CSS */
+    .fish {
+      position: absolute;
+      width: 60px; height: 60px;
+      font-size: 40px;
+      display: flex; align-items: center; justify-content: center;
+      transform: translate(-50%, -50%);
+      cursor: pointer;
+      user-select: none;
+    }
+    .blue-fish { background: transparent; }
     .red-fish { 
-      background-color: #ff3355; 
-      border: 4px solid #aa0022;
-      animation: pulse 1s infinite; 
-      z-index: 501; /* Make sure red fish is always clickable */
+      background: rgba(255, 0, 0, 0.3); 
+      border-radius: 50%; 
+      animation: pulse 1s infinite;
     }
 
     @keyframes pulse {
@@ -91,37 +63,16 @@
       100% { box-shadow: 0 0 0 0 rgba(255, 51, 85, 0); }
     }
 
-    /* --- VIDEO PLAYER --- */
-    #video-screen {
-      position: absolute;
-      inset: 0;
-      background: black;
-      display: none; /* Hidden until game over */
-      z-index: 400;
-    }
-    #player {
-      width: 100%;
-      height: 100%;
+    /* Tracking Status Text */
+    #status-text {
+      font-size: 50px;
+      font-weight: bold;
     }
 
-    /* Force WebGazer camera elements to the very front */
+    /* Force WebGazer elements to be visible */
     #webgazerVideoFeed, #webgazerVideoCanvas, #webgazerFaceOverlay, #webgazerFaceFeedbackBox {
       z-index: 9999 !important;
       display: block !important;
-    }
-
-    /* --- DEBUG PANEL --- */
-    #debug {
-      position: absolute;
-      top: 10px;
-      left: 10px;
-      background: rgba(0,0,0,0.7);
-      color: white;
-      padding: 10px;
-      font-size: 14px;
-      border-radius: 8px;
-      z-index: 999;
-      pointer-events: none;
     }
   </style>
 </head>
@@ -129,115 +80,70 @@
 
   <div id="start-screen">
     <h2>Eye Tracking Setup</h2>
-    <p>We need to calibrate the camera first.</p>
-    <p><strong>Rule for the child:</strong> Keep your head still, look at the RED FISH, and click it!</p>
-    <button id="startBtn">Start Game & Camera</button>
+    <p>Click start, allow the camera, and wait for your face to appear.</p>
+    <button id="start-btn">Start Camera</button>
+    <p id="loading-text" style="display:none; color: yellow;">Starting camera... please wait.</p>
   </div>
 
   <div id="calibration-screen">
+    <h2 style="position: absolute; top: 20px; color: white;">Catch the RED fish!</h2>
     </div>
 
-  <div id="video-screen">
-    <div id="player"></div>
+  <div id="tracking-screen">
+    <div id="status-text">Waiting for gaze...</div>
   </div>
 
-  <button id="stopBtn">⏹ Stop & Save Data</button>
-  <button id="downloadBtn">📥 Download CSV</button>
-
-  <div id="debug">Waiting to start...</div>
-
-<script>
-    /************************************************************
-    URL PARAMETERS & VARIABLES
-    ************************************************************/
-    const params = new URLSearchParams(location.search);
-    const PID = params.get("pid") || "P001";
-    const VID = params.get("vid") || "V01";
-    const YOUTUBE_ID = params.get("yt") || "dQw4w9WgXcQ"; 
-    const DEBUG = params.get("debug") === "1";
-
-    const SESSION_ID = "gaze_sess_" + Date.now();
-    let csvData = [];
-    const CSV_HEADERS = ["timestamp", "session_id", "participant_id", "video_id", "youtube_id", "video_time", "gaze_x", "gaze_y", "on_screen"];
-    
-    let player = null;
-    let sampleTimer = null;
-    let sessionEnded = false;
-
-    const points = [
+  <script>
+    // --- State Variables ---
+    let calibrationPoints = [
       {x: 15, y: 15}, {x: 50, y: 15}, {x: 85, y: 15},
       {x: 15, y: 50}, {x: 50, y: 50}, {x: 85, y: 50},
       {x: 15, y: 85}, {x: 50, y: 85}, {x: 85, y: 85}
     ];
-    let remainingTargets = [];
-    let currentTargetIndex = -1;
+    let remainingPoints = [0, 1, 2, 3, 4, 5, 6, 7, 8];
+    let currentTarget = -1;
 
+    // --- DOM Elements ---
+    const startBtn = document.getElementById("start-btn");
+    const loadingText = document.getElementById("loading-text");
     const startScreen = document.getElementById("start-screen");
     const calibScreen = document.getElementById("calibration-screen");
-    const videoScreen = document.getElementById("video-screen");
-    const debugEl = document.getElementById("debug");
-    const startBtn = document.getElementById("startBtn");
-    const stopBtn = document.getElementById("stopBtn");
-    const downloadBtn = document.getElementById("downloadBtn");
+    const trackingScreen = document.getElementById("tracking-screen");
+    const statusText = document.getElementById("status-text");
 
-    if (!DEBUG) debugEl.style.display = "none";
+    // --- 1. Start WebGazer ---
+    startBtn.addEventListener("click", async () => {
+      startBtn.style.display = "none";
+      loadingText.style.display = "block";
 
-    /************************************************************
-    YOUTUBE SETUP
-    ************************************************************/
-    const tag = document.createElement("script");
-    tag.src = "https://www.youtube.com/iframe_api";
-    document.head.appendChild(tag);
-
-    window.onYouTubeIframeAPIReady = function () {
-      player = new YT.Player("player", {
-        videoId: YOUTUBE_ID,
-        playerVars: { controls: 0, rel: 0, modestbranding: 1, playsinline: 1 },
-        events: { onStateChange: onPlayerStateChange }
-      });
-    };
-
-    /************************************************************
-    START INITIALIZATION
-    ************************************************************/
-    startBtn.addEventListener("click", () => {
-      startScreen.style.display = "none";
-      debugEl.innerText = "Please click 'Allow' for the camera and wait...";
-      
+      // Clear old data just in case
       webgazer.clearData();
 
-      // Initialize WebGazer and start the camera
-      webgazer.setGazeListener(function(data, elapsedTime) {}).begin();
-      webgazer.showVideo(true).showPredictionPoints(DEBUG);
+      // Begin WebGazer (This triggers the browser permission popup)
+      await webgazer.begin();
+      
+      // Show the camera feed and the guessing dot
+      webgazer.showVideo(true).showPredictionPoints(true);
 
-      // We use a polling interval to wait until WebGazer is ACTUALLY ready
-      // This prevents the game from starting while the permissions box is open
-      let checkReadyTimer = setInterval(() => {
-        if (webgazer.isReady()) {
-          clearInterval(checkReadyTimer);
-          debugEl.innerText = "Camera ready! Please center your face in the green box.";
-          
-          // Now that camera is visually on, wait 4 seconds for user to center face
-          setTimeout(() => {
-            setupFishGame();
-          }, 4000);
-        }
-      }, 500);
+      // Give the camera 3 seconds to fully render and find the face before showing fish
+      setTimeout(() => {
+        startScreen.style.display = "none";
+        startCalibration();
+      }, 3000);
     });
 
-    /************************************************************
-    THE FISH GAME (CALIBRATION)
-    ************************************************************/
-    function setupFishGame() {
+    // --- 2. Calibration Game ---
+    function startCalibration() {
       calibScreen.style.display = "block";
-      debugEl.innerText = "Calibrating: Catch the red fish!";
+      
+      // Shuffle the order of the fish
+      remainingPoints.sort(() => Math.random() - 0.5);
 
-      remainingTargets = [0, 1, 2, 3, 4, 5, 6, 7, 8].sort(() => Math.random() - 0.5);
-
-      points.forEach((pos, index) => {
+      // Draw all 9 fish on the screen
+      calibrationPoints.forEach((pos, index) => {
         const fish = document.createElement("div");
-        fish.id = "fish-" + index;
-        fish.className = "fish-btn blue-fish";
+        fish.id = `fish-${index}`;
+        fish.className = "fish blue-fish";
         fish.innerText = "🔵🐟";
         fish.style.left = pos.x + "%";
         fish.style.top = pos.y + "%";
@@ -246,122 +152,77 @@
         calibScreen.appendChild(fish);
       });
 
-      activateNextTarget();
+      activateNextFish();
     }
 
-    function activateNextTarget() {
-      if (remainingTargets.length === 0) {
-        finishCalibration();
+    function activateNextFish() {
+      // If no points left, we are done calibrating!
+      if (remainingPoints.length === 0) {
+        calibScreen.style.display = "none";
+        startTrackingActivity();
         return;
       }
 
-      currentTargetIndex = remainingTargets.pop();
-      const targetFish = document.getElementById("fish-" + currentTargetIndex);
-      
-      targetFish.className = "fish-btn red-fish";
+      // Pick the next fish to turn red
+      currentTarget = remainingPoints.pop();
+      const targetFish = document.getElementById(`fish-${currentTarget}`);
+      targetFish.className = "fish red-fish";
       targetFish.innerText = "🔴🐠";
     }
 
     function onFishClick(clickedIndex) {
-      if (clickedIndex === currentTargetIndex) {
-        const caughtFish = document.getElementById("fish-" + clickedIndex);
-        caughtFish.style.display = "none";
-        activateNextTarget();
-      }
-    }
-
-    function finishCalibration() {
-      calibScreen.style.display = "none";
-      videoScreen.style.display = "block";
-      stopBtn.style.display = "block";
-      
-      webgazer.showVideo(false);
-
-      debugEl.innerText = "Starting Video & Logging...";
-      player.playVideo();
-      startLogging();
-    }
-
-    /************************************************************
-    DATA LOGGING LOOP
-    ************************************************************/
-    function startLogging() {
-      csvData.push(CSV_HEADERS);
-
-      sampleTimer = setInterval(() => {
-        if (sessionEnded || player.getPlayerState() !== YT.PlayerState.PLAYING) return;
-
-        const t = player.getCurrentTime ? player.getCurrentTime() : 0;
-        let prediction = webgazer.getCurrentPrediction();
+      // Only do something if they clicked the exact RED fish
+      if (clickedIndex === currentTarget) {
+        const caughtFish = document.getElementById(`fish-${clickedIndex}`);
+        caughtFish.style.display = "none"; // Hide the caught fish
         
-        let gazeX = -1;
-        let gazeY = -1;
-        let onScreen = 0;
-
-        // Strict safeguard to prevent NaN from crashing the logger
-        if (prediction && !isNaN(prediction.x) && !isNaN(prediction.y)) {
-          gazeX = Math.round(prediction.x);
-          gazeY = Math.round(prediction.y);
-
-          if (gazeX >= 0 && gazeX <= window.innerWidth && 
-              gazeY >= 0 && gazeY <= window.innerHeight) {
-            onScreen = 1;
-          }
-        }
-
-        if (DEBUG) {
-          debugEl.innerText = `Time: ${t.toFixed(1)}s | X:${gazeX} Y:${gazeY} | OnScreen: ${onScreen}`;
-        }
-
-        const row = [
-          new Date().toISOString(), SESSION_ID, PID, VID, YOUTUBE_ID, 
-          Number(t.toFixed(3)), gazeX, gazeY, onScreen
-        ];
-        csvData.push(row);
-
-      }, 1000); 
-    }
-
-    /************************************************************
-    END SESSION & DOWNLOAD
-    ************************************************************/
-    function onPlayerStateChange(event) {
-      if (!sessionEnded && event.data === YT.PlayerState.ENDED) {
-        endSession();
+        // WebGazer automatically learns from this click in the background
+        activateNextFish();
       }
     }
 
-    stopBtn.addEventListener("click", () => endSession());
+    // --- 3. Main Tracking Activity ---
+    function startTrackingActivity() {
+      trackingScreen.style.display = "flex";
+      
+      // We can hide the guessing dot now so it isn't distracting
+      webgazer.showPredictionPoints(false);
 
-    function endSession() {
-      sessionEnded = true;
-      clearInterval(sampleTimer);
-      if (player && player.pauseVideo) player.pauseVideo();
-      
-      // Wrapped in a try-catch so it never breaks the download button
-      try { webgazer.pause(); } catch(e) { console.log("WebGazer pause error", e); }
-      
-      stopBtn.style.display = "none";
-      downloadBtn.style.display = "block";
-      downloadCSV();
+      // Setup a listener that fires constantly with the user's eye coordinates
+      webgazer.setGazeListener((data, elapsedTime) => {
+        if (data == null) {
+          // If data is null, the AI has lost the face entirely
+          updateStatus(false);
+          return;
+        }
+
+        const x = data.x;
+        const y = data.y;
+
+        // Check if coordinates are inside the browser window
+        const isInsideX = (x >= 0 && x <= window.innerWidth);
+        const isInsideY = (y >= 0 && y <= window.innerHeight);
+
+        if (isInsideX && isInsideY) {
+          updateStatus(true); // On Screen
+        } else {
+          updateStatus(false); // Off Screen
+        }
+      });
     }
 
-    function downloadCSV() {
-      if (csvData.length <= 1) {
-        alert("No gaze data was recorded! Make sure the camera is working.");
-        return;
+    // Update the visual text based on gaze
+    function updateStatus(isOnScreen) {
+      if (isOnScreen) {
+        statusText.innerText = "👀 Looking at Screen!";
+        statusText.style.color = "green";
+        trackingScreen.style.backgroundColor = "#e6ffe6"; // Light green background
+      } else {
+        statusText.innerText = "🙈 Looking AWAY!";
+        statusText.style.color = "red";
+        trackingScreen.style.backgroundColor = "#ffe6e6"; // Light red background
       }
-      const csvString = csvData.map(row => row.join(",")).join("\n");
-      const blob = new Blob([csvString], { type: "text/csv;charset=utf-8;" });
-      const url = URL.createObjectURL(blob);
-      const link = document.createElement("a");
-      link.setAttribute("href", url);
-      link.setAttribute("download", `GAZE_${PID}_${VID}.csv`);
-      document.body.appendChild(link);
-      link.click();
-      document.body.removeChild(link);
-      debugEl.innerText = "CSV Downloaded!";
     }
-
-    downloadBtn.addEventListener("click", () => downloadCSV());
   </script>
+</body>
+</html>
